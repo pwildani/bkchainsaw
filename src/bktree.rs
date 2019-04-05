@@ -115,7 +115,7 @@ pub struct BkTree<N: BkNode, M: Metric<Dist, N::Key>, Alloc: NodeAllocator> {
     node_allocator: Alloc,
 }
 
-type BkInRamTree<K, M> = BkTree<BkInRam<K>, M, BkInRamAllocator<K>>;
+pub type BkInRamTree<K, M> = BkTree<BkInRam<K>, M, BkInRamAllocator<K>>;
 
 impl<K: PartialEq, M: Metric<Dist, K>> BkInRamTree<K, M> {
     pub fn new(metric: M) -> Self {

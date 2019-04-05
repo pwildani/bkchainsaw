@@ -4,6 +4,7 @@ mod metric;
 
 pub use bknode::BkNode;
 pub use bktree::BkInRamAllocator;
+pub use bktree::BkInRamTree;
 pub use bktree::BkTree;
 pub use metric::hamming::HammingMetric;
 
