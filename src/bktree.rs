@@ -80,6 +80,7 @@ impl<K> BkNode for BkInRam<K> {
             self.children
                 .iter()
                 .enumerate()
+                .rev()
                 .filter(|(_, child)| child.is_some())
                 .map(|(dist, child)| (dist.into(), child.as_ref().unwrap())),
         )
@@ -270,7 +271,7 @@ where
         needle: &'a KQ::Query,
         tolerance: Dist,
     ) -> impl 'a + Iterator<Item=(Dist, K)> {
-        BkFind::new(self, tolerance, needle)
+        BkFind::new(&self.kq, &self.metric, self.max_depth, self.root.as_ref(), tolerance, needle)
     }
 
     fn distance(&self, key: &KQ::Key, query: &KQ::Query) -> Dist {
@@ -284,38 +285,38 @@ struct BkFindEntry<'a, N: 'a + BkNode> {
     node: &'a N,
 }
 
-struct BkFind<'a, KQ, N: 'a, M, Alloc>
+struct BkFind<'a, KQ, N: 'a, M>
 where
     KQ: KeyQuery + Default,
     N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
     M: Metric<<KQ as KeyQuery>::Query>,
-    Alloc: NodeAllocator<Node = N>,
 {
-    tree: &'a BkTree<KQ, M, Alloc>,
+    kq: &'a KQ,
+    metric: &'a M,
     needle: &'a KQ::Query,
     tolerance: Dist,
     stack: Vec<BkFindEntry<'a, N>>,
 }
 
-impl<'a, KQ, N, M, Alloc> BkFind<'a, KQ, N, M, Alloc>
+impl<'a, KQ, N, M> BkFind<'a, KQ, N, M>
 where
-    KQ: KeyQuery + Default,
+    KQ: 'a + KeyQuery + Default,
     N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
-    M: Metric<<KQ as KeyQuery>::Query>,
-    Alloc: NodeAllocator<Node = N>,
+    M: 'a + Metric<<KQ as KeyQuery>::Query>,
 {
-    fn new(tree: &'a BkTree<KQ, M, Alloc>, tolerance: Dist, needle: &'a KQ::Query) -> Self {
+    fn new (kq: &'a KQ, metric: &'a M, max_depth: usize, root: Option<&'a N>, tolerance: Dist, needle: &'a KQ::Query) -> Self {
         // Initial setup. Push the root node onto the stack
-        let mut stack = Vec::with_capacity(tree.max_depth);
-        if let Some(ref root) = tree.root {
-            let cur = tree.distance(&root.key(), needle);
+        let mut stack: Vec<BkFindEntry<'a, N>> = Vec::with_capacity(max_depth);
+        if let Some(ref root) = root {
+            let cur = kq.distance(metric, &root.key(), needle);
             stack.push(BkFindEntry {
                 dist: cur,
                 node: root,
             });
         }
         BkFind {
-            tree: tree,
+            kq: kq,
+            metric: metric,
             needle: needle,
             tolerance: tolerance,
             stack: stack,
@@ -323,12 +324,11 @@ where
     }
 }
 
-impl<'a, KQ, N, M, Alloc> Iterator for BkFind<'a, KQ, N, M, Alloc>
+impl<'a, KQ, N, M> Iterator for BkFind<'a, KQ, N, M>
 where
-    KQ: KeyQuery + Default,
+    KQ: 'a + KeyQuery + Default,
     N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
-    M: Metric<<KQ as KeyQuery>::Query>,
-    Alloc: NodeAllocator<Node = N>,
+    M: 'a + Metric<<KQ as KeyQuery>::Query>,
 {
     type Item = (Dist, KQ::Key);
 
@@ -339,7 +339,7 @@ where
             let max: usize = candidate.dist.saturating_add(self.tolerance);
             for (dist, ref child) in candidate.node.children_iter() {
                 if min <= dist && dist <= max {
-                    let child_dist = self.tree.distance(&child.key(), self.needle);
+                    let child_dist = self.kq.distance(self.metric, &child.key(), self.needle);
                     self.stack.push(BkFindEntry {
                         dist: child_dist,
                         node: child,
@@ -478,6 +478,6 @@ mod tests {
         tree.add("left");
         tree.add("ship");
         let results = tree.find("foo", 1).map(|(_, s)| s).collect::<Vec<String>>();
-        assert_eq!(vec!["quux", "foo", "bar", "baz", "left", "ship"], results);
+        assert_eq!(vec!["quux", "left", "ship", "foo", "bar", "baz"], results);
     }
 }
