@@ -2,6 +2,7 @@ use std::marker::PhantomData;
 use std::ops::BitXor;
 
 use crate::metric::Metric;
+use crate::Dist;
 
 pub trait CountOnes {
     #[inline]
@@ -45,14 +46,13 @@ where
     I: BitXor<I>,
     <I as BitXor<I>>::Output: CountOnes;
 
-impl<Dist, I> Metric<Dist, I> for HammingMetric<I>
+impl<I> Metric<I> for HammingMetric<I>
 where
     I: Copy + BitXor<I>,
-    Dist: From<u32>,
     <I as BitXor<I>>::Output: CountOnes,
 {
     fn distance(&self, k1: &I, k2: &I) -> Dist {
-        (*k1 ^ *k2).count_ones().into()
+        (*k1 ^ *k2).count_ones() as usize
     }
 }
 // TODO: figure out how to declare a HammingMetric over Clone and over BitXor<&I> that doesn't conflict with the above
@@ -66,11 +66,11 @@ mod tests {
     #[test]
     fn hamming_distance() {
         let metric: HammingMetric<u64> = Default::default();
-        assert_eq!(0u64, metric.distance(&0u64, &0u64));
-        assert_eq!(0u64, metric.distance(&1u64, &1u64));
-        assert_eq!(1u64, metric.distance(&1u64, &0u64));
-        assert_eq!(1u64, metric.distance(&0u64, &1u64));
-        assert_eq!(2u64, metric.distance(&1u64, &2u64));
-        assert_eq!(1u64, metric.distance(&0u64, &2u64));
+        assert_eq!(0usize, metric.distance(&0u64, &0u64));
+        assert_eq!(0usize, metric.distance(&1u64, &1u64));
+        assert_eq!(1usize, metric.distance(&1u64, &0u64));
+        assert_eq!(1usize, metric.distance(&0u64, &1u64));
+        assert_eq!(2usize, metric.distance(&1u64, &2u64));
+        assert_eq!(1usize, metric.distance(&0u64, &2u64));
     }
 }
