@@ -1,5 +1,5 @@
 pub mod hamming;
+pub mod metric;
+pub mod strlen;
 
-pub trait Metric<D, K> {
-    fn distance(&self, k1: &K, k2: &K) -> D;
-}
+pub use super::metric::metric::Metric;

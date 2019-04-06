@@ -1,3 +1,9 @@
+use std::borrow::Borrow;
+/**
+ * let metric = ...  // e.g. metric : HammingMetric<KeyType> = Default::default();
+ * let tree = BkTree::new(metric);
+ * tree.add(key1);
+ */
 use std::fmt;
 use std::fmt::Debug;
 use std::fmt::Formatter;
@@ -21,16 +27,16 @@ impl From<u32> for Dist {
         Dist(i)
     }
 }
-impl Into<u32> for Dist {
-    fn into(self) -> u32 {
-        self.0 as u32
+
+impl From<u64> for Dist {
+    fn from(i: u64) -> Dist {
+        Dist(i as u32)
     }
 }
 
 pub trait NodeAllocator {
-    type Key;
     type Node: BkNode;
-    fn new(&mut self, key: Self::Key) -> Self::Node;
+    fn new(&mut self, key: <Self::Node as BkNode>::Key) -> Self::Node;
 }
 
 /// BK tree node optimised for small distances.
@@ -95,46 +101,129 @@ where
     }
 }
 
-#[derive(Default, Derivative)]
+#[derive(Derivative)]
 #[derivative(Debug)]
 pub struct BkInRamAllocator<K>(#[derivative(Debug = "ignore")] PhantomData<K>);
 
-impl<K> NodeAllocator for BkInRamAllocator<K> {
-    type Key = K;
-    type Node = BkInRam<Self::Key>;
+impl<K: Clone> NodeAllocator for BkInRamAllocator<K> {
+    type Node = BkInRam<K>;
 
-    fn new(&mut self, key: Self::Key) -> Self::Node {
-        BkInRam::new(key)
+    fn new(&mut self, key: K) -> Self::Node {
+        BkInRam::new(key.clone())
+    }
+}
+
+impl<K> Default for BkInRamAllocator<K> {
+    fn default() -> BkInRamAllocator<K> {
+        BkInRamAllocator(PhantomData)
+    }
+}
+
+pub trait KeyQuery: Default {
+    type Key: Clone;
+    type Query: ?Sized;
+
+    fn distance<D, M: Metric<D, Self::Query>>(
+        &self,
+        metric: &M,
+        key: &Self::Key,
+        query: &Self::Query,
+    ) -> D;
+    fn to_key(&self, query: &Self::Query) -> Self::Key;
+    fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool;
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct U64Key;
+
+impl KeyQuery for U64Key {
+    type Key = u64;
+    type Query = u64;
+
+    #[inline]
+    fn distance<D, M: Metric<D, Self::Query>>(
+        &self,
+        metric: &M,
+        key: &Self::Key,
+        query: &Self::Query,
+    ) -> D {
+        metric.distance(key, query)
+    }
+
+    #[inline]
+    fn to_key(&self, query: &Self::Query) -> Self::Key {
+        *query
+    }
+
+    #[inline]
+    fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool {
+        key == query
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct StringKey;
+
+impl KeyQuery for StringKey {
+    type Key = String;
+    type Query = str;
+
+    #[inline]
+    fn distance<D, M: Metric<D, Self::Query>>(
+        &self,
+        metric: &M,
+        key: &Self::Key,
+        query: &Self::Query,
+    ) -> D {
+        metric.distance(key.as_str(), &query)
+    }
+
+    #[inline]
+    fn to_key(&self, query: &Self::Query) -> String {
+        query.to_string()
+    }
+
+    #[inline]
+    fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool {
+        key.as_str() == query
     }
 }
 
 #[derive(Debug)]
-pub struct BkTree<N: BkNode, M: Metric<Dist, N::Key>, Alloc: NodeAllocator> {
-    root: Option<N>,
+pub struct BkTree<KQ, M, A>
+where
+    KQ: KeyQuery,
+    M: Metric<Dist, <KQ as KeyQuery>::Query>,
+    A: NodeAllocator,
+{
+    root: Option<A::Node>,
     metric: M,
-    node_allocator: Alloc,
+    node_allocator: A,
+    kq: KQ,
 }
 
-pub type BkInRamTree<K, M> = BkTree<BkInRam<K>, M, BkInRamAllocator<K>>;
+pub type BkInRamTree<KQ, M> = BkTree<KQ, M, BkInRamAllocator<<KQ as KeyQuery>::Key>>;
 
-impl<K: PartialEq, M: Metric<Dist, K>> BkInRamTree<K, M> {
+impl<KQ: KeyQuery, M: Metric<Dist, KQ::Query>> BkInRamTree<KQ, M> {
     pub fn new(metric: M) -> Self {
-        BkInRamTree::new_with_allocator(metric, BkInRamAllocator(PhantomData))
+        let alloc: BkInRamAllocator<KQ::Key> = Default::default();
+        BkInRamTree::new_with_allocator(metric, alloc)
     }
 }
 
-impl<
-        K: PartialEq,
-        N: BkNode<Key = K, Dist = Dist>,
-        M: Metric<Dist, K>,
-        Alloc: NodeAllocator<Key = K, Node = N>,
-    > BkTree<N, M, Alloc>
+impl<K: Clone, KQ, M, N, Alloc> BkTree<KQ, M, Alloc>
+where
+    KQ: KeyQuery<Key = K> + Default,
+    M: Metric<Dist, <KQ as KeyQuery>::Query>,
+    N: BkNode<Key = K, Dist = Dist>,
+    Alloc: NodeAllocator<Node = N>,
 {
     pub fn new_with_allocator(metric: M, alloc: Alloc) -> Self {
         BkTree {
             root: None,
             metric: metric,
             node_allocator: alloc,
+            kq: Default::default(),
         }
     }
 
@@ -147,22 +236,22 @@ impl<
     ///   tree.add(2);
     ///   tree.add(3);
     ///
-    pub fn add(&mut self, key: K) {
+    pub fn add(&mut self, query: &KQ::Query) {
         match self.root {
             None => {
-                let child = self.node_allocator.new(key);
+                let child = self.node_allocator.new(self.kq.to_key(query));
                 self.root = Some(child);
             }
             Some(ref mut root) => {
                 let mut cur = root;
-                let mut dist = self.metric.distance(cur.key(), &key);
-                while cur.has_child_at(dist) && (dist == Dist(0) || cur.key() != &key) {
+                let mut dist = self.kq.distance(&self.metric, cur.key(), query);
+                while cur.has_child_at(dist) && (dist == Dist(0) || !self.kq.eq(cur.key(), query)) {
                     cur = cur.child_at_mut(dist).unwrap();
-                    dist = self.metric.distance(cur.key(), &key);
+                    dist = self.kq.distance(&self.metric, cur.key(), query);
                 }
-                assert!(!cur.has_child_at(dist) || cur.key() == &key);
-                if cur.key() != &key {
-                    let child = self.node_allocator.new(key);
+                assert!(!cur.has_child_at(dist) || self.kq.eq(cur.key(), query));
+                if !self.kq.eq(cur.key(), query) {
+                    let child = self.node_allocator.new(self.kq.to_key(query));
                     cur.set_child_node(dist, child);
                 }
             }
