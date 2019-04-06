@@ -2,7 +2,7 @@
  * let metric = ...  // e.g. metric : HammingMetric<KeyType> = Default::default();
  * let tree = BkTree::new(metric);
  * tree.add(key1);
- */
+*/
 
 use std::fmt;
 use std::fmt::Debug;
@@ -13,6 +13,7 @@ use std::vec::Vec;
 
 use crate::bknode::BkNode;
 use crate::metric::Metric;
+use crate::keyquery::KeyQuery;
 
 use crate::Dist;
 
@@ -75,7 +76,7 @@ impl<K> BkNode for BkInRam<K> {
         self.children[dist] = Some(node);
     }
 
-    fn children_iter<'a>(&'a self) -> Box<'a + Iterator<Item = (Dist, &'a Self)>> {
+    fn children_iter<'b, 'a: 'b>(&'a self) -> Box<'b + Iterator<Item = (Dist, &'b Self)>>{
         Box::new(
             self.children
                 .iter()
@@ -115,75 +116,7 @@ impl<K> Default for BkInRamAllocator<K> {
     }
 }
 
-pub trait KeyQuery: Default {
-    type Key: Clone;
-    type Query: ?Sized;
 
-    fn distance<M: Metric<Self::Query>>(
-        &self,
-        metric: &M,
-        key: &Self::Key,
-        query: &Self::Query,
-    ) -> Dist;
-    fn to_key(&self, query: &Self::Query) -> Self::Key;
-    fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool;
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct U64Key;
-
-impl KeyQuery for U64Key {
-    type Key = u64;
-    type Query = u64;
-
-    #[inline]
-    fn distance<M: Metric<Self::Query>>(
-        &self,
-        metric: &M,
-        key: &Self::Key,
-        query: &Self::Query,
-    ) -> Dist {
-        metric.distance(key, query)
-    }
-
-    #[inline]
-    fn to_key(&self, query: &Self::Query) -> Self::Key {
-        *query
-    }
-
-    #[inline]
-    fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool {
-        key == query
-    }
-}
-
-#[derive(Debug, Clone, Copy, Default)]
-pub struct StringKey;
-
-impl KeyQuery for StringKey {
-    type Key = String;
-    type Query = str;
-
-    #[inline]
-    fn distance<M: Metric<Self::Query>>(
-        &self,
-        metric: &M,
-        key: &Self::Key,
-        query: &Self::Query,
-    ) -> Dist {
-        metric.distance(key.as_str(), &query)
-    }
-
-    #[inline]
-    fn to_key(&self, query: &Self::Query) -> String {
-        query.to_string()
-    }
-
-    #[inline]
-    fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool {
-        key.as_str() == query
-    }
-}
 
 #[derive(Debug)]
 pub struct BkTree<KQ, M, A>
@@ -266,12 +199,56 @@ where
         self.root = root;
     }
 
-    pub fn find<'a>(
-        &'a self,
-        needle: &'a KQ::Query,
+    /*
+     
+    // E0309: Needs GAT with lifetimes to express that the BkFind iterator's innards should not
+    // live longer than the tree itself.
+    pub fn find<'a, 'b: 'a>(
+        &'b self,
+        needle: &'b KQ::Query,
         tolerance: Dist,
-    ) -> impl 'a + Iterator<Item=(Dist, K)> {
+    ) -> impl 'a + Iterator<Item = (Dist, K)> {
+        use super::find::BkFind;
         BkFind::new(&self.kq, &self.metric, self.max_depth, self.root.as_ref(), tolerance, needle)
+    }
+
+    pub fn in_order<'a, 'b: 'a>(&'b self) -> impl 'a + Iterator<Item=(Dist, K)> {
+         use super::inorder::BkInOrder;
+         BkInOrder::new(self.root.as_ref())
+    }
+*/
+
+    pub fn find_each<F>(
+        &self,
+        needle: &KQ::Query,
+        tolerance: Dist,
+        callback: F,
+    ) 
+        where F: FnMut(Dist, &KQ::Key)
+    {
+        use super::find::BkFind;
+        BkFind::new(
+            &self.kq,
+            &self.metric,
+            self.max_depth,
+            self.root.as_ref(),
+            tolerance,
+            needle,
+        ).each(callback)
+    }
+
+    /// Called for each node in the tree,
+    ///
+    /// Callback args:
+    ///    * distance from parent
+    ///    * number of children
+    ///    * key
+    pub fn preorder_each<F>(&self, callback: F)
+    where
+        F: FnMut(Dist, usize, &K),
+    {
+        use super::preorder::BkPreOrder;
+        BkPreOrder::new(self.root.as_ref()).each(callback);
     }
 
     fn distance(&self, key: &KQ::Key, query: &KQ::Query) -> Dist {
@@ -279,90 +256,14 @@ where
     }
 }
 
-#[derive(Debug, Clone)]
-struct BkFindEntry<'a, N: 'a + BkNode> {
-    dist: Dist,
-    node: &'a N,
-}
-
-struct BkFind<'a, KQ, N: 'a, M>
-where
-    KQ: KeyQuery + Default,
-    N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
-    M: Metric<<KQ as KeyQuery>::Query>,
-{
-    kq: &'a KQ,
-    metric: &'a M,
-    needle: &'a KQ::Query,
-    tolerance: Dist,
-    stack: Vec<BkFindEntry<'a, N>>,
-}
-
-impl<'a, KQ, N, M> BkFind<'a, KQ, N, M>
-where
-    KQ: 'a + KeyQuery + Default,
-    N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
-    M: 'a + Metric<<KQ as KeyQuery>::Query>,
-{
-    fn new (kq: &'a KQ, metric: &'a M, max_depth: usize, root: Option<&'a N>, tolerance: Dist, needle: &'a KQ::Query) -> Self {
-        // Initial setup. Push the root node onto the stack
-        let mut stack: Vec<BkFindEntry<'a, N>> = Vec::with_capacity(max_depth);
-        if let Some(ref root) = root {
-            let cur = kq.distance(metric, &root.key(), needle);
-            stack.push(BkFindEntry {
-                dist: cur,
-                node: root,
-            });
-        }
-        BkFind {
-            kq: kq,
-            metric: metric,
-            needle: needle,
-            tolerance: tolerance,
-            stack: stack,
-        }
-    }
-}
-
-impl<'a, KQ, N, M> Iterator for BkFind<'a, KQ, N, M>
-where
-    KQ: 'a + KeyQuery + Default,
-    N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
-    M: 'a + Metric<<KQ as KeyQuery>::Query>,
-{
-    type Item = (Dist, KQ::Key);
-
-    fn next(&mut self) -> Option<(Dist, KQ::Key)> {
-        while let Some(candidate) = self.stack.pop() {
-            // Enqueue the children.
-            let min: usize = candidate.dist.saturating_sub(self.tolerance);
-            let max: usize = candidate.dist.saturating_add(self.tolerance);
-            for (dist, ref child) in candidate.node.children_iter() {
-                if min <= dist && dist <= max {
-                    let child_dist = self.kq.distance(self.metric, &child.key(), self.needle);
-                    self.stack.push(BkFindEntry {
-                        dist: child_dist,
-                        node: child,
-                    })
-                }
-            }
-
-            // And maybe yield this node.
-            if candidate.dist <= self.tolerance {
-                return Some((candidate.dist, candidate.node.key().clone()));
-            }
-        }
-        return None;
-    }
-}
 
 
 #[cfg(test)]
 mod tests {
     use crate::bktree::BkInRamTree;
     use crate::bktree::BkTree;
-    use crate::bktree::StringKey;
-    use crate::bktree::U64Key;
+    use crate::keys::StringKey;
+    use crate::keys::U64Key;
     use crate::metric::hamming::HammingMetric;
     use crate::metric::strlen::StrLenMetric;
 
@@ -464,7 +365,8 @@ mod tests {
         tree.add("baz");
         tree.add("left");
         tree.add("ship");
-        let results = tree.find("foo", 0).map(|(_, s)| s).collect::<Vec<String>>();
+        let mut results = Vec::new();
+        tree.find_each("foo", 0, |_, k| results.push(k.clone()));
         assert_eq!(vec!["foo", "bar", "baz"], results);
     }
 
@@ -477,7 +379,8 @@ mod tests {
         tree.add("baz");
         tree.add("left");
         tree.add("ship");
-        let results = tree.find("foo", 1).map(|(_, s)| s).collect::<Vec<String>>();
+        let mut results = Vec::new();
+        tree.find_each("foo", 1, |_, k| results.push(k.clone()));
         assert_eq!(vec!["quux", "left", "ship", "foo", "bar", "baz"], results);
     }
 }
