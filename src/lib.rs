@@ -3,6 +3,7 @@ mod bktree;
 mod metric;
 pub mod keys;
 pub mod keyquery;
+pub mod array_storage;
 
 pub use bknode::BkNode;
 pub use bktree::BkInRamTree;
@@ -11,6 +12,7 @@ pub use metric::hamming::HammingMetric;
 
 #[macro_use]
 extern crate derivative;
+extern crate byteorder;
 
 /// The concrete distance type shared across this crate. This is the result of all metric
 /// comparisons.
