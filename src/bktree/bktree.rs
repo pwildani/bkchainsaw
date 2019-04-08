@@ -12,14 +12,16 @@ use std::option::Option;
 use std::vec::Vec;
 
 use crate::bknode::BkNode;
-use crate::metric::Metric;
 use crate::keyquery::KeyQuery;
+use crate::metric::Metric;
 
 use crate::Dist;
 
-pub trait NodeAllocator {
-    type Node: BkNode;
-    fn new(&mut self, key: <Self::Node as BkNode>::Key) -> Self::Node;
+pub trait NodeAllocator<'a> {
+    type Key: Clone;
+    type Node: BkNode<Key = Self::Key>;
+    fn new_root(&'a self, key: Self::Key) -> Self::Node;
+    fn new_child(&'a self, key: Self::Key) -> Self::Node;
 }
 
 /// BK tree node optimised for small distances.
@@ -37,9 +39,18 @@ impl<K> BkInRam<K> {
             children: Vec::with_capacity(16),
         }
     }
+
+    fn children_iter(&self) -> impl Iterator<Item = (Dist, &Self)> {
+        self.children
+            .iter()
+            .enumerate()
+            .rev() // Find here looks at the last child first, and things play nicer if the closest is first.
+            .filter(|(_, child)| child.is_some())
+            .map(|(dist, child)| (dist.into(), child.as_ref().unwrap()))
+    }
 }
 
-impl<K> BkNode for BkInRam<K> {
+impl<'a, K> BkNode for BkInRam<K> {
     type Key = K;
 
     fn key(&self) -> &Self::Key {
@@ -76,15 +87,8 @@ impl<K> BkNode for BkInRam<K> {
         self.children[dist] = Some(node);
     }
 
-    fn children_iter<'b, 'a: 'b>(&'a self) -> Box<'b + Iterator<Item = (Dist, &'b Self)>>{
-        Box::new(
-            self.children
-                .iter()
-                .enumerate()
-                .rev()
-                .filter(|(_, child)| child.is_some())
-                .map(|(dist, child)| (dist.into(), child.as_ref().unwrap())),
-        )
+    fn children_vector(&self) -> Vec<(Dist, &Self)> {
+        self.children_iter().collect()
     }
 }
 
@@ -100,55 +104,47 @@ where
 
 #[derive(Derivative)]
 #[derivative(Debug)]
-pub struct BkInRamAllocator<K>(#[derivative(Debug = "ignore")] PhantomData<K>);
+pub struct BkInRamAllocator<'a, K>(#[derivative(Debug = "ignore")] PhantomData<&'a K>);
+// The PhantomData above is misrepresenting 'a. It's the lifetime of the nodes, not the lifetime
+// of the keys of the nodes.
 
-impl<K: Clone> NodeAllocator for BkInRamAllocator<K> {
+impl<'a, K: Clone> NodeAllocator<'a> for BkInRamAllocator<'a, K> {
+    type Key = K;
     type Node = BkInRam<K>;
 
-    fn new(&mut self, key: K) -> Self::Node {
-        BkInRam::new(key.clone())
+    fn new_root(&'a self, key: K) -> Self::Node {
+        BkInRam::new(key)
+    }
+    fn new_child(&'a self, key: K) -> Self::Node {
+        BkInRam::new(key)
     }
 }
-
-impl<K> Default for BkInRamAllocator<K> {
-    fn default() -> BkInRamAllocator<K> {
-        BkInRamAllocator(PhantomData)
-    }
-}
-
-
 
 #[derive(Debug)]
-pub struct BkTree<KQ, M, A>
+pub struct BkTree<'nodes, KQ, M, A>
 where
     KQ: KeyQuery,
     M: Metric<<KQ as KeyQuery>::Query>,
-    A: NodeAllocator,
+    A: 'nodes + NodeAllocator<'nodes>,
 {
     root: Option<A::Node>,
     max_depth: usize,
     metric: M,
-    node_allocator: A,
+    node_allocator: &'nodes A,
     kq: KQ,
 }
 
-pub type BkInRamTree<KQ, M> = BkTree<KQ, M, BkInRamAllocator<<KQ as KeyQuery>::Key>>;
+pub type BkInRamTree<'a, KQ, M> = BkTree<'a, KQ, M, BkInRamAllocator<'a, <KQ as KeyQuery>::Key>>;
 
-impl<KQ: KeyQuery, M: Metric<KQ::Query>> BkInRamTree<KQ, M> {
-    pub fn new(metric: M) -> Self {
-        let alloc: BkInRamAllocator<KQ::Key> = Default::default();
-        BkInRamTree::new_with_allocator(metric, alloc)
-    }
-}
-
-impl<K: Clone, KQ, M, N, Alloc> BkTree<KQ, M, Alloc>
+impl<'a, K, KQ, M, N, Alloc> BkTree<'a, KQ, M, Alloc>
 where
+    K: Clone,
     KQ: KeyQuery<Key = K> + Default,
     M: Metric<<KQ as KeyQuery>::Query>,
-    N: BkNode<Key = K>,
-    Alloc: NodeAllocator<Node = N>,
+    N: 'a + BkNode<Key = K>,
+    Alloc: NodeAllocator<'a, Key = K, Node = N>,
 {
-    pub fn new_with_allocator(metric: M, alloc: Alloc) -> Self {
+    pub fn new(metric: M, alloc: &'a Alloc) -> Self {
         BkTree {
             root: None,
             max_depth: 0,
@@ -157,8 +153,19 @@ where
             kq: Default::default(),
         }
     }
+}
 
+impl<'a, K: 'a + Clone, KQ, M, N, Alloc> BkTree<'a, KQ, M, Alloc>
+where
+    K: 'a + Clone,
+    KQ: KeyQuery<Key = K> + Default,
+    M: Metric<<KQ as KeyQuery>::Query>,
+    N: 'a + BkNode<Key = K>,
+    Alloc: NodeAllocator<'a, Key = K, Node = N>,
+{
     /// Add keys to a tree.
+    ///
+    /// Currently only implemented if the root node type is the same as the child node type.
     ///
     /// Example:
     ///   let mut tree = BkTree::new(Metric, BkInRamAllocator());
@@ -169,38 +176,39 @@ where
     ///
     pub fn add(&mut self, query: &KQ::Query) {
         let mut root = self.root.take();
-
         match root {
             None => {
-                let child = self.node_allocator.new(self.kq.to_key(query));
-                root = Some(child);
+                root = Some(self.node_allocator.new_root(self.kq.to_key(query)));
             }
             Some(ref mut root) => {
+                let mut insert_depth = 0;
                 let mut cur = root;
-                let cur_key = cur.key();
-                let mut dist = self.distance(cur_key, query);
-                let mut d = 1;
+                let mut dist = self.kq.distance(&self.metric, cur.key(), query);
+
+                // Find an empty child slot where the slot's distance from its node is the same as the
+                // query's distance from the same node, or that this query is already present in
+                // the tree.
                 while cur.has_child_at(dist) && (dist == 0 || !self.kq.eq(cur.key(), query)) {
                     cur = cur.child_at_mut(dist).unwrap();
-                    dist = self.distance(cur.key(), query);
-                    d += 1;
+                    dist = self.kq.distance(&self.metric, cur.key(), query);
+                    insert_depth += 1;
                 }
+
                 assert!(!cur.has_child_at(dist) || self.kq.eq(cur.key(), query));
                 if !self.kq.eq(cur.key(), query) {
-                    let child = self.node_allocator.new(self.kq.to_key(query));
+                    let child = self.node_allocator.new_child(self.kq.to_key(query));
                     cur.set_child_node(dist, child);
                 }
-                if self.max_depth < d {
-                    self.max_depth = d;
+                if self.max_depth < insert_depth {
+                    self.max_depth = insert_depth;
                 }
             }
         }
-
         self.root = root;
     }
+}
+/*
 
-    /*
-     
     // E0309: Needs GAT with lifetimes to express that the BkFind iterator's innards should not
     // live longer than the tree itself.
     pub fn find<'a, 'b: 'a>(
@@ -218,13 +226,17 @@ where
     }
 */
 
-    pub fn find_each<F>(
-        &self,
-        needle: &KQ::Query,
-        tolerance: Dist,
-        callback: F,
-    ) 
-        where F: FnMut(Dist, &KQ::Key)
+impl<'a, K: 'a + Clone, KQ, M, N, Alloc> BkTree<'a, KQ, M, Alloc>
+where
+    K: 'a + Clone,
+    KQ: KeyQuery<Key = K> + Default,
+    M: Metric<<KQ as KeyQuery>::Query>,
+    N: 'a + BkNode<Key = K>,
+    Alloc: NodeAllocator<'a, Key = K, Node = N>,
+{
+    pub fn find_each<F>(&'a self, needle: &'a KQ::Query, tolerance: Dist, callback: F)
+    where
+        F: FnMut(Dist, &KQ::Key),
     {
         use super::find::BkFind;
         BkFind::new(
@@ -234,44 +246,51 @@ where
             self.root.as_ref(),
             tolerance,
             needle,
-        ).each(callback)
+        )
+        .each(callback)
     }
+}
 
-    /// Called for each node in the tree,
+impl<'a, K: 'a + Clone, KQ, M, N, Alloc> BkTree<'a, KQ, M, Alloc>
+where
+    K: 'a + Clone,
+    KQ: KeyQuery<Key = K> + Default,
+    M: Metric<<KQ as KeyQuery>::Query>,
+    N: 'a + BkNode<Key = K>,
+    Alloc: NodeAllocator<'a, Key = K, Node = N>,
+{
+    /// Traverse the tree, calling callback for each key. Parents are passed before children.
     ///
     /// Callback args:
     ///    * distance from parent
-    ///    * number of children
+    ///    * number of children of the node on which key was found
     ///    * key
-    pub fn preorder_each<F>(&self, callback: F)
+    pub fn preorder_each<F>(&'a self, callback: &mut F)
     where
         F: FnMut(Dist, usize, &K),
     {
         use super::preorder::BkPreOrder;
         BkPreOrder::new(self.root.as_ref()).each(callback);
     }
-
-    fn distance(&self, key: &KQ::Key, query: &KQ::Query) -> Dist {
-        self.kq.distance(&self.metric, key, query)
-    }
 }
-
-
 
 #[cfg(test)]
 mod tests {
-    use crate::bktree::BkInRamTree;
-    use crate::bktree::BkTree;
+    use super::*;
     use crate::keys::StringKey;
     use crate::keys::U64Key;
     use crate::metric::hamming::HammingMetric;
     use crate::metric::strlen::StrLenMetric;
 
-    fn hamming_tree() -> BkInRamTree<U64Key, HammingMetric<u64>> {
-        BkTree::new(Default::default())
-        //let metric: HammingMetric<u64> = Default::default();
-        //let mut tree : BkInRamTree<u64, HammingMetric<u64>, u64> = BkTree::new(metric);
-        //tree
+    const U64_ALLOC: BkInRamAllocator<'static, u64> = BkInRamAllocator(PhantomData);
+    const STRING_ALLOC: BkInRamAllocator<'static, String> = BkInRamAllocator(PhantomData);
+
+    fn hamming_tree<'a>() -> BkInRamTree<'a, U64Key, HammingMetric<u64>> {
+        BkTree::new(Default::default(), &U64_ALLOC)
+    }
+
+    fn strlen_tree<'a>() -> BkInRamTree<'a, StringKey, StrLenMetric> {
+        BkTree::new(Default::default(), &STRING_ALLOC)
     }
 
     #[test]
@@ -328,27 +347,28 @@ mod tests {
 
     #[test]
     fn can_construct_empty_string_tree() {
-        let tree: BkInRamTree<StringKey, StrLenMetric> = BkTree::new(StrLenMetric);
+        let tree = strlen_tree();
         println!("Empty string tree: {:?}", tree);
     }
 
     #[test]
     fn can_add_empty_string() {
-        let mut tree: BkInRamTree<StringKey, StrLenMetric> = BkTree::new(StrLenMetric);
+        let mut tree = strlen_tree();
         tree.add("");
         println!("empty string tree: {:?}", tree);
     }
 
     #[test]
     fn can_add_string() {
-        let mut tree: BkInRamTree<StringKey, StrLenMetric> = BkTree::new(StrLenMetric);
+        let mut tree = strlen_tree();
         tree.add("foo");
         println!("foo string tree: {:?}", tree);
     }
 
     #[test]
     fn can_add_many_strings() {
-        let mut tree: BkInRamTree<StringKey, StrLenMetric> = BkTree::new(StrLenMetric);
+        let mut tree = strlen_tree();
+        tree.add("foo");
         tree.add("foo");
         tree.add("bar");
         tree.add("baz");
@@ -359,12 +379,13 @@ mod tests {
 
     #[test]
     fn can_add_find_exact_match() {
-        let mut tree: BkInRamTree<StringKey, StrLenMetric> = BkTree::new(StrLenMetric);
+        let mut tree = strlen_tree();
         tree.add("foo");
         tree.add("bar");
         tree.add("baz");
         tree.add("left");
         tree.add("ship");
+        println!("exact_match tree: {:?}", tree);
         let mut results = Vec::new();
         tree.find_each("foo", 0, |_, k| results.push(k.clone()));
         assert_eq!(vec!["foo", "bar", "baz"], results);
@@ -372,13 +393,14 @@ mod tests {
 
     #[test]
     fn can_add_find_distant_match() {
-        let mut tree: BkInRamTree<StringKey, StrLenMetric> = BkTree::new(StrLenMetric);
+        let mut tree = strlen_tree();
         tree.add("quux");
         tree.add("foo");
         tree.add("bar");
         tree.add("baz");
         tree.add("left");
         tree.add("ship");
+        println!("distant_match tree: {:?}", tree);
         let mut results = Vec::new();
         tree.find_each("foo", 1, |_, k| results.push(k.clone()));
         assert_eq!(vec!["quux", "left", "ship", "foo", "bar", "baz"], results);

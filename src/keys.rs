@@ -30,7 +30,6 @@ impl KeyQuery for U64Key {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, Default)]
 pub struct StringKey;
 

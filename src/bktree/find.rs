@@ -1,8 +1,8 @@
 use std::option::Option;
 
 use crate::bknode::BkNode;
-use crate::metric::Metric;
 use crate::keyquery::KeyQuery;
+use crate::metric::Metric;
 
 use crate::Dist;
 #[derive(Debug, Clone)]
@@ -22,6 +22,7 @@ where
     metric: &'a M,
     needle: &'a KQ::Query,
     tolerance: Dist,
+    root: Option<&'a N>,
     stack: Vec<BkFindEntry<'a, N>>,
 }
 
@@ -31,38 +32,56 @@ where
     N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
     M: 'a + Metric<<KQ as KeyQuery>::Query>,
 {
-    pub fn new (kq: &'a KQ, metric: &'a M, max_depth: usize, root: Option<&'a N>, tolerance: Dist, needle: &'a KQ::Query) -> Self {
-        // Initial setup. Push the root node onto the stack
-        let mut stack: Vec<BkFindEntry<'a, N>> = Vec::with_capacity(max_depth);
-        if let Some(ref root) = root {
-            let cur = kq.distance(metric, &root.key(), needle);
-            stack.push(BkFindEntry {
-                dist: cur,
-                node: root,
-            });
-        }
+    pub fn new(
+        kq: &'a KQ,
+        metric: &'a M,
+        max_depth_hint: usize,
+        root: Option<&'a N>,
+        tolerance: Dist,
+        needle: &'a KQ::Query,
+    ) -> Self {
+        let stack = Vec::with_capacity(max_depth_hint);
         BkFind {
-            kq: kq,
-            metric: metric,
-            needle: needle,
-            tolerance: tolerance,
-            stack: stack,
+            kq,
+            metric,
+            needle,
+            tolerance,
+            root,
+            stack,
         }
     }
+}
 
-    pub fn each<F: FnMut(Dist, &'a KQ::Key)>(&'a mut self, mut callback: F)
-        where F: FnMut(Dist, &'a KQ::Key)
+impl<'a, KQ, N, M> BkFind<'a, KQ, N, M>
+where
+    KQ: 'a + KeyQuery + Default,
+    N: 'a + BkNode<Key = <KQ as KeyQuery>::Key>,
+    M: 'a + Metric<<KQ as KeyQuery>::Query>,
+{
+    pub fn each<F: FnMut(Dist, &'a KQ::Key)>(mut self, mut callback: F)
+    where
+        F: FnMut(Dist, &'a KQ::Key),
     {
+        // Temporary: we can cheat because the root node is the same type as the children for now.
+        if let Some(root) = self.root.take() {
+            let dist = self.kq.distance(self.metric, root.key(), self.needle);
+            self.stack.push(BkFindEntry {
+                dist: dist,
+                node: root,
+            })
+        }
+
         while let Some(candidate) = self.stack.pop() {
             // Enqueue the children.
-            let min: usize = candidate.dist.saturating_sub(self.tolerance);
-            let max: usize = candidate.dist.saturating_add(self.tolerance);
-            for (dist, ref child) in candidate.node.children_iter() {
-                if min <= dist && dist <= max {
-                    let child_dist = self.kq.distance(self.metric, &child.key(), self.needle);
+            let min: Dist = candidate.dist.saturating_sub(self.tolerance);
+            let max: Dist = candidate.dist.saturating_add(self.tolerance);
+            let children = candidate.node.children_vector();
+            for (dist, child) in children.iter() {
+                if min <= *dist && *dist <= max {
+                    let child_dist = self.kq.distance(self.metric, child.key(), self.needle);
                     self.stack.push(BkFindEntry {
                         dist: child_dist,
-                        node: child,
+                        node: *child,
                     })
                 }
             }
@@ -74,6 +93,8 @@ where
         }
     }
 }
+
+/* Needs GATs to define this as an iterator. RFC 1598.
 
 impl<'a, KQ, N, M> Iterator for BkFind<'a, KQ, N, M>
 where
@@ -88,7 +109,7 @@ where
             // Enqueue the children.
             let min: usize = candidate.dist.saturating_sub(self.tolerance);
             let max: usize = candidate.dist.saturating_add(self.tolerance);
-            for (dist, ref child) in candidate.node.children_iter() {
+            for (dist, ref child) in candidate.node.children_vector().iter() {
                 if min <= dist && dist <= max {
                     let child_dist = self.kq.distance(self.metric, &child.key(), self.needle);
                     self.stack.push(BkFindEntry {
@@ -106,3 +127,4 @@ where
         return None;
     }
 }
+*/
