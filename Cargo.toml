@@ -7,3 +7,4 @@ edition = "2018"
 [dependencies]
 derivative = "*"
 byteorder = "1"
+typed-arena = "*"

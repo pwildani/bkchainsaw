@@ -98,7 +98,7 @@ impl<'a> InStorageNode<'a> for VBNode16<'a> {
  * F64BNode8 key array: adjacent keys at fixed offsets.
 */
 #[derive(Clone)]
-struct F64BNode8<'a> {
+pub struct F64BNode8<'a> {
     node_buffer: &'a [u8],
     key_buffer: &'a [u8],
     offset: usize,
