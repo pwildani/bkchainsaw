@@ -12,3 +12,10 @@ pub trait BkNode {
     // Needs RFC 1598: GATs: fn children_iter(&self) -> impl Iterator<Item = (Dist, &Self)>;
     fn children_vector(&self) -> Vec<(Dist, &Self)>;
 }
+
+pub trait BkNodeMut {
+    type Key;
+
+    fn set_child_node(&mut self, distance: Dist, node: Self);
+    fn child_at_mut(&mut self, dist: Dist) -> Option<&mut Self>;
+}

@@ -1,5 +1,8 @@
 /*
-   All multi byte entities are stored little endian.
+ * This is one layer above a file format. It describes how to interpret two chunks of bytes as
+ * node in a BK tree structure and the raw key bytes.
+ *
+ * All multi byte entities are stored little endian.
 */
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -17,20 +20,22 @@ trait InStorageNode<'a> {
 }
 
 /**
-* Max total key size is 4GiB.
-* Max total node size is 4GiB
+ * Variable Key Bytes, 16 bit child counters and distances.
+ *
+ * Max total key size is 4GiB.
+ * Max total node size is 4GiB
 
-* VBNode16 node array, 0 <= dist and children < 2**16,
-* {dist from parent, num children, key byte offset,}
-*   * dist from parent: 2 bytes
-*   * num children: 2 bytes
-*   * key byte offset: 4 bytes
-*   * children start offset: 4 bytes
-* == 12 bytes per entry
+ * VBNode16 node array, 0 <= dist and children < 2**16,
+ * {dist from parent, num children, key byte offset,}
+ *   * dist from parent: 2 bytes
+ *   * num children: 2 bytes
+ *   * key byte offset: 4 bytes
+ *   * children start offset: 4 bytes
+ * == 12 bytes per entry
 
-* VBNode16 Key array: adjacent keys all smooshed together. These MUST be stored
-* in the same order as VBNode16 instances.
-*/
+ * VBNode16 Key array: adjacent keys all smooshed together. These MUST be stored
+ * in the same order as VBNode16 instances.
+ */
 #[derive(Clone)]
 struct VBNode16<'a> {
     node_buffer: &'a [u8],
@@ -85,6 +90,8 @@ impl<'a> InStorageNode<'a> for VBNode16<'a> {
 }
 
 /**
+ * 64 bit keys, 8 bit child counters and distances.
+ *
  * Max total key size is usize::MAX bytes
  * Max total node size is 4GiB
  *

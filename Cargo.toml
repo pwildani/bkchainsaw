@@ -5,6 +5,16 @@ authors = ["Peter Wildani <peter.wildani@reddit.com>"]
 edition = "2018"
 
 [dependencies]
-derivative = "*"
 byteorder = "1"
+derivative = "*"
+memmap = "0.7.0"
+serde = "1.0"
+serde_derive = "1.0"
 typed-arena = "*"
+serde_cbor = "0.9"
+sha2 = "0.8"
+
+
+[[bin]]
+name = "check_bktree_file"
+path = "bin/check_bktree_file.rs"
