@@ -1,0 +1,10 @@
+{
+  "Created-On": "1970-01-01 00:00:00",
+  "Node-Format": "8 bits distance, 8 bits child",
+  "Node-Bytes": 0,
+  "Node-Offset": 0,
+  "Node-Count": 0, 
+  "Key-Format": "fixed 64 bits",
+  "Key-Offset": 0,
+  "Key-Bytes": 0 
+}

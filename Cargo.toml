@@ -12,9 +12,20 @@ serde = "1.0"
 serde_derive = "1.0"
 typed-arena = "*"
 serde_cbor = "0.9"
+serde_json = "*"
 sha2 = "0.8"
+structopt = "*"
+
 
 
 [[bin]]
 name = "check_bktree_file"
 path = "bin/check_bktree_file.rs"
+
+[[bin]]
+name = "header_from_json"
+path = "bin/header_from_json.rs"
+
+[[bin]]
+name = "bktree_from_json"
+path = "bin/bktree_from_json.rs"

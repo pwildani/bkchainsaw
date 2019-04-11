@@ -4,13 +4,13 @@
  *     "BKTree: " + "0000\n"
  *   Checksum: "SHA256: " + hex sha-256 of the remainder of the file following this newline + "\n---\n"
  *   CBOR encoded header as a map:
- *       "Created-On: " + ISO-8601 timestamp
- *       "Node-Format": "8 bits distance, 8 bits child\n"
+ *       "Created-On":  ISO-8601 timestamp
+ *       "Node-Format": "8 bits distance, 8 bits child"
  *       "Node-Bytes": integer, node storage size
  *       "Node-Offset": integer, byte offset after the end of the header where nodes start
  *           Should be "0\n"
  *       "Node-Count": optional, integer, number of nodes
- *       "Key-Format": "fixed 64 bits\n" (future work: "variable length\n")
+ *       "Key-Format": "fixed 64 bits" (future work: "variable length\n")
  *       "Key-Offset": integer, byte offset after header where keys start
  *       "Key-Bytes": integer, key storage size
  *       "Padding:": optional if lucky, '.' repeated (0 to 63 times) until the byte after the end
@@ -72,14 +72,14 @@ impl TrimStart for Vec<u8> {
 
 
 #[derive(Debug, Default, Deserialize, Serialize)]
-struct FileDescrHeader {
+pub struct FileDescrHeader {
     #[serde(rename="Created-On")]
     created_on: String,
     
     #[serde(rename="Node-Format")]
     node_format: String,
     #[serde(rename="Node-Bytes")]
-    node_bytes: String,
+    node_bytes: u64,
     #[serde(rename="Node-Offset")]
     node_offset: u64,
     #[serde(rename="Node-Count")]
@@ -92,18 +92,18 @@ struct FileDescrHeader {
     #[serde(rename="Key-Bytes")]
     key_bytes: u64,
 
-    #[serde(rename="Padding")]
+    #[serde(rename="Padding", default)]
     padding: String,
 }
 
 
 impl FileDescrHeader {
-    fn encode(&mut self, offset: usize)  -> Vec<u8> {
+    pub fn encode(&mut self, offset: usize)  -> Vec<u8> {
         // Ensure 64 byte alignment
         const ALIGNMENT: usize = 64;
         self.padding = "".to_string();
         let mut buffer = serde_cbor::to_vec(&self).unwrap();
-        let padding = ALIGNMENT - (offset + buffer.len()) % ALIGNMENT;
+        let padding = ALIGNMENT - (offset + buffer.len() + 1) % ALIGNMENT;
         self.padding = ".".repeat(padding);
         buffer = serde_cbor::to_vec(&self).unwrap();
         assert_eq!(0, (offset + buffer.len()) % ALIGNMENT);
@@ -118,6 +118,8 @@ pub struct Header {
     descr: FileDescrHeader,
 }
 
+pub const MAGIC_VERSION:&'static str = "BKTREE: 0000";
+pub const HASH_HEADER_NAME: &'static str = "SHA256";
 
 impl Header {
     pub fn read(file: &mut File, verify_checksum: bool) -> Result<Header, Box<dyn error::Error + 'static>> {
@@ -126,14 +128,14 @@ impl Header {
 
         // Check the magic number
         reader.read_until('\n' as u8, &mut header.version)?;
-        if header.version != "BKTREE: 0000".as_bytes() {
+        if header.version != MAGIC_VERSION.as_bytes() {
             return Err("Unknown file format (expected \"BKTREE: 0000\")".into());
         }
 
         // Read the checksum
         let mut checksum_type: Vec<u8> = Vec::new();
         reader.read_until(':' as u8, &mut checksum_type)?;
-        if checksum_type != "SHA256".as_bytes() {
+        if checksum_type != HASH_HEADER_NAME.as_bytes() {
             return Err("Unknown checksum format (expected \"SHA256\")".into());
         }
         let mut checksum : Vec<u8> = Vec::new();
