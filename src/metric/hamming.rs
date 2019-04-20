@@ -51,7 +51,13 @@ where
     I: Copy + BitXor<I>,
     <I as BitXor<I>>::Output: CountOnes,
 {
+    #[inline]
     fn distance(&self, k1: &I, k2: &I) -> Dist {
+        (*k1 ^ *k2).count_ones() as usize
+    }
+
+    #[inline]
+    fn distance_static(k1: &I, k2: &I) -> Dist {
         (*k1 ^ *k2).count_ones() as usize
     }
 }

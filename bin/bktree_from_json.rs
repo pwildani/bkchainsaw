@@ -1,6 +1,5 @@
 extern crate bkchainsaw;
 
-
 use serde_json;
 use std::env;
 use std::error::Error;
@@ -40,15 +39,15 @@ struct CommandLineArgs {
 
 fn main() -> Result<(), Box<dyn Error + 'static>> {
     let opts = CommandLineArgs::from_args();
-	let args: Vec<String> = env::args().collect();
+    let args: Vec<String> = env::args().collect();
     // 1: input descr json file
     // 2: checksum value
     // 3: output header + cbor descr btree file, no nodes or keys
-	println!("args: {:?}", args);
-	let descrfile = File::open(args[1].clone())?;
-    let mut descr : bkfile::FileDescrHeader = serde_json::from_reader(BufReader::new(descrfile))?;
+    println!("args: {:?}", args);
+    let descrfile = File::open(args[1].clone())?;
+    let mut descr: bkfile::FileDescrHeader = serde_json::from_reader(BufReader::new(descrfile))?;
 
-	let outfile = File::create(args[3].clone())?;
+    let outfile = File::create(args[3].clone())?;
     let mut out = BufWriter::new(outfile);
     writeln!(out, "{}", bkfile::MAGIC_VERSION)?;
     writeln!(out, "{}: {}", bkfile::HASH_HEADER_NAME, args[2])?;
@@ -60,5 +59,3 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
 
     Ok(())
 }
-
-

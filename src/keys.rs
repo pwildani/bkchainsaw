@@ -20,12 +20,35 @@ impl KeyQuery for U64Key {
     }
 
     #[inline]
+    fn distance_static<M: Metric<Self::Query>>(
+        metric: &M,
+        key: &Self::Key,
+        query: &Self::Query,
+    ) -> Dist {
+        metric.distance(key, query)
+    }
+
+    #[inline]
     fn to_key(&self, query: &Self::Query) -> Self::Key {
         *query
     }
 
     #[inline]
+    fn to_key_static(query: &Self::Query) -> Self::Key {
+        *query
+    }
+
+    #[inline]
+    fn to_query_static(key: &Self::Key) -> &Self::Query {
+        &key
+    }
+    #[inline]
     fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool {
+        key == query
+    }
+
+    #[inline]
+    fn eq_static(key: &Self::Key, query: &Self::Query) -> bool {
         key == query
     }
 }
@@ -48,12 +71,36 @@ impl KeyQuery for StringKey {
     }
 
     #[inline]
+    fn distance_static<M: Metric<Self::Query>>(
+        metric: &M,
+        key: &Self::Key,
+        query: &Self::Query,
+    ) -> Dist {
+        metric.distance(key.as_str(), &query)
+    }
+
+    #[inline]
     fn to_key(&self, query: &Self::Query) -> String {
         query.to_string()
     }
 
     #[inline]
+    fn to_key_static(query: &Self::Query) -> String {
+        query.to_string()
+    }
+
+    #[inline]
+    fn to_query_static(key: &Self::Key) -> &str {
+        key.as_str()
+    }
+
+    #[inline]
     fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool {
+        key.as_str() == query
+    }
+
+    #[inline]
+    fn eq_static(key: &Self::Key, query: &Self::Query) -> bool {
         key.as_str() == query
     }
 }

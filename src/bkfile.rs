@@ -22,22 +22,21 @@
  *      * 0 padding to next 64-byte-aligned position from the start of the file.
  *      * key array
  */
-
-use memmap::MmapOptions;
+//use memmap::MmapOptions;
 use memmap::Mmap;
+use std::fs::File;
 use std::io::Result as IOResult;
 use std::io::{BufRead, BufReader};
 use std::io::{Seek, SeekFrom};
-use std::fs::File;
-use std::error::Error;
-use sha2::{Sha256, Digest};
-use std::io;
+//use std::error::Error;
+use sha2::{Digest, Sha256};
 use std::error;
+use std::io;
 
 fn open_mmap(filename: &str, offset: usize, length: usize) -> IOResult<Mmap> {
     let file = File::open(filename)?;
     // let mmap = unsafe { MmapOptions::new().map(&file)? };
-    let mmap = unsafe { Mmap::map(&file)?  };
+    let mmap = unsafe { Mmap::map(&file)? };
     Ok(mmap)
 }
 
@@ -70,35 +69,33 @@ impl TrimStart for Vec<u8> {
     }
 }
 
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct FileDescrHeader {
-    #[serde(rename="Created-On")]
+    #[serde(rename = "Created-On")]
     created_on: String,
-    
-    #[serde(rename="Node-Format")]
+
+    #[serde(rename = "Node-Format")]
     node_format: String,
-    #[serde(rename="Node-Bytes")]
+    #[serde(rename = "Node-Bytes")]
     node_bytes: u64,
-    #[serde(rename="Node-Offset")]
+    #[serde(rename = "Node-Offset")]
     node_offset: u64,
-    #[serde(rename="Node-Count")]
+    #[serde(rename = "Node-Count")]
     node_count: u64,
 
-    #[serde(rename="Key-Format")]
+    #[serde(rename = "Key-Format")]
     key_format: String,
-    #[serde(rename="Key-Offset")]
+    #[serde(rename = "Key-Offset")]
     key_offset: u64,
-    #[serde(rename="Key-Bytes")]
+    #[serde(rename = "Key-Bytes")]
     key_bytes: u64,
 
-    #[serde(rename="Padding", default)]
+    #[serde(rename = "Padding", default)]
     padding: String,
 }
 
-
 impl FileDescrHeader {
-    pub fn encode(&mut self, offset: usize)  -> Vec<u8> {
+    pub fn encode(&mut self, offset: usize) -> Vec<u8> {
         // Ensure 64 byte alignment
         const ALIGNMENT: usize = 64;
         self.padding = "".to_string();
@@ -107,7 +104,7 @@ impl FileDescrHeader {
         self.padding = ".".repeat(padding);
         buffer = serde_cbor::to_vec(&self).unwrap();
         assert_eq!(0, (offset + buffer.len()) % ALIGNMENT);
-        return buffer
+        return buffer;
     }
 }
 
@@ -118,11 +115,14 @@ pub struct Header {
     descr: FileDescrHeader,
 }
 
-pub const MAGIC_VERSION:&'static str = "BKTREE: 0000";
+pub const MAGIC_VERSION: &'static str = "BKTREE: 0000";
 pub const HASH_HEADER_NAME: &'static str = "SHA256";
 
 impl Header {
-    pub fn read(file: &mut File, verify_checksum: bool) -> Result<Header, Box<dyn error::Error + 'static>> {
+    pub fn read(
+        file: &mut File,
+        verify_checksum: bool,
+    ) -> Result<Header, Box<dyn error::Error + 'static>> {
         let mut header: Header = Default::default();
         let mut reader = BufReader::new(file);
 
@@ -138,10 +138,9 @@ impl Header {
         if checksum_type != HASH_HEADER_NAME.as_bytes() {
             return Err("Unknown checksum format (expected \"SHA256\")".into());
         }
-        let mut checksum : Vec<u8> = Vec::new();
+        let mut checksum: Vec<u8> = Vec::new();
         reader.read_until('\n' as u8, &mut checksum);
         header.checksum = checksum.trim_start_matches(' ' as u8);
-        
 
         let descr_start = reader.seek(SeekFrom::Current(0))?;
         if verify_checksum {
@@ -149,14 +148,15 @@ impl Header {
             let n = io::copy(&mut reader, &mut hasher)?;
             let found = format!("{:x}", hasher.result());
             if found.as_bytes() != header.checksum.as_slice() {
-                return Err(format!("Checksum failure. Found {:?}, expected {:?}", found, header.checksum).into());
+                return Err(format!(
+                    "Checksum failure. Found {:?}, expected {:?}",
+                    found, header.checksum
+                )
+                .into());
             }
         }
         reader.seek(SeekFrom::Start(descr_start))?;
 
         return Ok(header);
-
     }
 }
-
-

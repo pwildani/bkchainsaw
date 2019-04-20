@@ -11,6 +11,18 @@ pub trait KeyQuery: Default {
         key: &Self::Key,
         query: &Self::Query,
     ) -> Dist;
+
+    fn distance_static<M: Metric<Self::Query>>(
+        metric: &M,
+        key: &Self::Key,
+        query: &Self::Query,
+    ) -> Dist;
+
     fn to_key(&self, query: &Self::Query) -> Self::Key;
     fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool;
+
+    fn to_key_static(query: &Self::Query) -> Self::Key;
+    fn eq_static(key: &Self::Key, query: &Self::Query) -> bool;
+
+    fn to_query_static(key: &Self::Key) -> &Self::Query;
 }

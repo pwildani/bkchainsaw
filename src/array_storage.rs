@@ -4,19 +4,31 @@
  *
  * All multi byte entities are stored little endian.
 */
+use std::cell::RefCell;
+use std::error::Error;
 
 use byteorder::{ByteOrder, LittleEndian};
 
 use crate::Dist;
 
-trait InStorageNode<'a> {
+pub trait InStorageNode {
     fn encoding_size(&self) -> usize;
     fn dist(&self) -> Option<Dist>;
     fn child_count(&self) -> Option<usize>;
     fn children_offset(&self) -> Option<usize>;
     fn key_offset(&self) -> Option<usize>;
     fn key_length(&self) -> Option<usize>;
-    fn key_bytes(&self) -> Option<&'a [u8]>;
+    // fn key_bytes(&self) -> Option<&'a [u8]>;
+}
+
+type NodeMutationResult = Result<(), Box<dyn Error>>;
+
+pub trait InStorageNodeMut: InStorageNode {
+    type Key;
+    fn set_key(&mut self, key: Self::Key) -> NodeMutationResult;
+    fn set_dist(&mut self, dist: Dist) -> NodeMutationResult;
+    fn set_num_children(&mut self, n: usize) -> NodeMutationResult;
+    fn set_child_offset(&mut self, child_offset: usize) -> NodeMutationResult;
 }
 
 /**
@@ -35,14 +47,15 @@ trait InStorageNode<'a> {
 
  * VBNode16 Key array: adjacent keys all smooshed together. These MUST be stored
  * in the same order as VBNode16 instances.
- */
+*/
 #[derive(Clone)]
 struct VBNode16<'a> {
-    node_buffer: &'a [u8],
-    key_buffer: &'a [u8],
-    offset: usize,
+    pub node_buffer: &'a [u8],
+    pub key_buffer: &'a [u8],
+    pub offset: usize,
 }
 
+/*
 impl<'a> VBNode16<'a> {
     fn get(&self, offset: usize, len: usize) -> Option<&[u8]> {
         get_slice(self.node_buffer, self.offset, offset, len)
@@ -58,7 +71,9 @@ impl<'a> VBNode16<'a> {
         return next.key_offset();
     }
 }
+*/
 
+/*
 impl<'a> InStorageNode<'a> for VBNode16<'a> {
     fn encoding_size(&self) -> usize {
         12
@@ -88,6 +103,7 @@ impl<'a> InStorageNode<'a> for VBNode16<'a> {
         })
     }
 }
+*/
 
 /**
  * 64 bit keys, 8 bit child counters and distances.
@@ -104,56 +120,71 @@ impl<'a> InStorageNode<'a> for VBNode16<'a> {
  *
  * F64BNode8 key array: adjacent keys at fixed offsets.
 */
-#[derive(Clone)]
+
 pub struct F64BNode8<'a> {
-    node_buffer: &'a [u8],
-    key_buffer: &'a [u8],
-    offset: usize,
+    pub node_buffer: RefCell<&'a mut [u8]>,
+    pub key_buffer: RefCell<&'a mut [u8]>,
+    pub offset: usize,
 }
 
 impl<'a> F64BNode8<'a> {
-    fn get(&self, offset: usize, len: usize) -> Option<&[u8]> {
-        get_slice(self.node_buffer, self.offset, offset, len)
-    }
-
     fn key_end(&self) -> Option<usize> {
         let end = self.key_offset()? + self.key_length()?;
-        if end <= self.key_buffer.len() {
+        if end <= self.key_buffer.borrow().len() {
             return Some(self.key_offset()? + 8);
         }
         return None;
     }
-
-    fn next_node(&self) -> F64BNode8<'a> {
-        F64BNode8 {
-            offset: self.offset + self.encoding_size(),
-            ..*self
+    fn key(&self) -> Option<u64> {
+        let start = self.key_offset()?;
+        match self.key_end() {
+            Some(end) => Some(LittleEndian::read_u64(
+                &self.key_buffer.borrow()[start..end],
+            )),
+            // Last node in the file. Shouldn't happen for this type, unless the key buffer was truncated.
+            None => panic!("Key buffer appears to have been truncated!"),
         }
     }
 
-    fn first_child(&self) -> Option<F64BNode8<'a>> {
+    fn next_node(self) -> F64BNode8<'a> {
+        F64BNode8 {
+            offset: self.offset + self.encoding_size(),
+            ..self
+        }
+    }
+
+    fn prev_node(self) -> F64BNode8<'a> {
+        F64BNode8 {
+            offset: self.offset - self.encoding_size(),
+            ..self
+        }
+    }
+
+    fn first_child(self) -> Option<F64BNode8<'a>> {
         Some(F64BNode8 {
             offset: self.children_offset()?,
-            ..*self
+            ..self
         })
     }
 }
 
-impl<'a> InStorageNode<'a> for F64BNode8<'a> {
+impl<'a> InStorageNode for F64BNode8<'a> {
     fn encoding_size(&self) -> usize {
         8
     }
 
     fn dist(&self) -> Option<Dist> {
         //Some(LittleEndian::read_u8(self.get(0, 1)?) as Dist)
-        Some(self.get(0, 1)?[0] as Dist)
+        Some(get_slice(&self.node_buffer.borrow(), self.offset, 0, 1)?[0] as Dist)
     }
     fn child_count(&self) -> Option<usize> {
         //Some(LittleEndian::read_u8(self.get(1, 1)?) as Dist)
-        Some(self.get(1, 1)?[0] as Dist)
+        Some(get_slice(&self.node_buffer.borrow(), self.offset, 1, 1)?[0] as Dist)
     }
     fn children_offset(&self) -> Option<usize> {
-        let offset = LittleEndian::read_u16(self.get(4, 4)?) as Dist;
+        let offset =
+            LittleEndian::read_u16(get_slice(&self.node_buffer.borrow(), self.offset, 4, 4)?)
+                as Dist;
         if offset > 0 {
             Some(offset)
         } else {
@@ -167,18 +198,50 @@ impl<'a> InStorageNode<'a> for F64BNode8<'a> {
     fn key_length(&self) -> Option<usize> {
         Some(8)
     }
+}
 
-    fn key_bytes(&self) -> Option<&'a [u8]> {
-        let start = self.key_offset()?;
-        match self.key_end() {
-            Some(end) => Some(&self.key_buffer[start..end]),
-            // Last node in the file. Shouldn't happen for this type, unless the key buffer was truncated.
-            None => panic!("Key buffer appears to have been truncated!"),
-        }
+impl<'a> InStorageNodeMut for F64BNode8<'a> {
+    type Key = u64;
+
+    fn set_key(&mut self, key: u64) -> NodeMutationResult {
+        LittleEndian::write_u64(
+            get_slice_mut(
+                &mut self.key_buffer.borrow_mut(),
+                self.key_offset().ok_or("no key offset")?,
+                0,
+                8,
+            )
+            .ok_or("out of space for key")?,
+            key,
+        );
+        Ok(())
+    }
+    fn set_dist(&mut self, dist: Dist) -> NodeMutationResult {
+        get_slice_mut(&mut self.node_buffer.borrow_mut(), self.offset, 0, 1)
+            .ok_or("out of space for dist")?[0] = dist as u8;
+        Ok(())
+    }
+    fn set_num_children(&mut self, n: usize) -> NodeMutationResult {
+        get_slice_mut(&mut self.node_buffer.borrow_mut(), self.offset, 1, 1)
+            .ok_or("out of space for child count")?[0] = n as u8;
+        Ok(())
+    }
+    fn set_child_offset(&mut self, offset: usize) -> NodeMutationResult {
+        LittleEndian::write_u16(
+            get_slice_mut(&mut self.node_buffer.borrow_mut(), self.offset, 4, 4)
+                .ok_or("out of space for child offset")?,
+            offset as u16,
+        );
+        Ok(())
     }
 }
 
-fn get_slice(buf: &[u8], offset1: usize, offset2: usize, len: usize) -> Option<&[u8]> {
+fn get_slice<'a: 'b, 'b>(
+    buf: &'a [u8],
+    offset1: usize,
+    offset2: usize,
+    len: usize,
+) -> Option<&'b [u8]> {
     let start = offset1 + offset2;
     let end = start + len;
     if buf.len() >= end {
@@ -187,10 +250,25 @@ fn get_slice(buf: &[u8], offset1: usize, offset2: usize, len: usize) -> Option<&
     return None;
 }
 
+fn get_slice_mut<'a: 'b, 'b>(
+    buf: &'a mut [u8],
+    offset1: usize,
+    offset2: usize,
+    len: usize,
+) -> Option<&'b mut [u8]> {
+    let start = offset1 + offset2;
+    let end = start + len;
+    if buf.len() >= end {
+        return Some(&mut buf[start..end]);
+    }
+    return None;
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
+    /*
     #[test]
     fn single_vbnode16() {
         let nodes = &[8, 0, 5, 0, 1, 0, 0, 0, 7, 0, 0, 0];
@@ -231,6 +309,7 @@ mod test {
             assert_eq!(Some(&keys[4..8]), node.key_bytes());
         }
     }
+    */
 
     #[test]
     fn single_f64bnode8() {
@@ -238,8 +317,8 @@ mod test {
         let keys = &[0, 1, 2, 3, 4, 5, 6, 7];
         let node = F64BNode8 {
             offset: 0,
-            node_buffer: nodes,
-            key_buffer: keys,
+            node_buffer: RefCell::new(nodes),
+            key_buffer: RefCell::new(keys),
         };
         assert_eq!(Some(8), node.dist());
         assert_eq!(Some(5), node.child_count());
@@ -255,8 +334,8 @@ mod test {
         {
             let node = F64BNode8 {
                 offset: 0,
-                node_buffer: nodes,
-                key_buffer: keys,
+                node_buffer: RefCell::new(nodes),
+                key_buffer: RefCell::new(keys),
             };
             assert_eq!(Some(8), node.dist());
             assert_eq!(Some(5), node.child_count());
@@ -267,8 +346,8 @@ mod test {
         {
             let node = F64BNode8 {
                 offset: 8,
-                node_buffer: nodes,
-                key_buffer: keys,
+                node_buffer: RefCell::new(nodes),
+                key_buffer: RefCell::new(keys),
             };
             assert_eq!(Some(4), node.dist());
             assert_eq!(Some(3), node.child_count());

@@ -4,31 +4,132 @@
  * tree.add(key1);
 */
 
-use std::fmt;
-use std::fmt::Debug;
-use std::fmt::Formatter;
-use std::marker::PhantomData;
+use std::error::Error;
+//use std::fmt;
+//use std::fmt::Debug;
+//use std::fmt::Formatter;
+//use std::marker::PhantomData;
 use std::option::Option;
-use std::vec::Vec;
+// use std::vec::Vec;
+use std::result::Result;
 
-use crate::bknode::BkNode;
+use crate::bknode::{BkNode, BkNodeMut};
 use crate::keyquery::KeyQuery;
-use crate::metric::Metric;
+use crate::metric::Metric as MetricTrait;
 
+use crate::nodeallocator::NodeAllocator;
 use crate::Dist;
 
-trait BkTree<KQ, M> 
+pub trait BkTree<Key: Clone> {
+    type KQ: KeyQuery<Key = Key>;
+    type Metric: MetricTrait<<Self::KQ as KeyQuery>::Query>;
+    type Node: BkNode<Key = Key>;
+
+    fn find_each<'a, F>(
+        &'a self,
+        needle: &'a <Self::KQ as KeyQuery>::Query,
+        tolerance: Dist,
+        callback: F,
+    ) where
+        F: FnMut(Dist, &<Self::KQ as KeyQuery>::Key);
+}
+
+pub trait BkTreeRootMut<'a, Key: Clone>: BkTree<Key>
 where
-    KQ: KeyQuery,
-    M: Metric<<KQ as KeyQuery>::Query>
+    <Self as BkTree<Key>>::Node: BkNodeMut<Key = Key>,
 {
-    type Node: BkNode;
+    // TODO: return an error of Alloc::AllocationError;
+    type Alloc: 'a + NodeAllocator<'a, Node = <Self as BkTree<Key>>::Node>;
+
+    fn node_allocator(&mut self) -> &'a Self::Alloc;
+    fn root_mut(&mut self) -> &mut Option<<Self as BkTree<Key>>::Node>;
+    fn max_depth_mut(&mut self) -> &mut usize;
+    fn incr_node_count(&mut self);
 }
 
-trait BkTreeMut<KQ, M>: BkTree<KQ, M> {
-    type Node: BkNode + BkNodeMut;
+pub trait BkTreeAdd<'a, Key: Clone>: BkTreeRootMut<'a, Key> + BkTree<Key>
+where
+    <Self as BkTree<Key>>::Node: BkNodeMut<Key = Key>,
+{
+    fn add(&mut self, key: <Self::KQ as KeyQuery>::Query) -> Result<(), Box<dyn Error>>;
 }
 
+impl<
+        'a,
+        Q: Sized,
+        Key: Clone,
+        KQ,
+        M,
+        N: BkNodeMut<Key = Key>,
+        Alloc: 'a,
+        T: BkTreeRootMut<'a, Key, Metric = M, Node = N, Alloc = Alloc, KQ = KQ>,
+    > BkTreeAdd<'a, Key> for T
+where
+    Alloc: NodeAllocator<'a, Node = N, Key = Key>,
+    KQ: KeyQuery<Key = Key, Query = Q>,
+    M: MetricTrait<Q>,
+{
+    /// Add keys to a tree.
+    ///
+    /// Example:
+    ///   let mut tree = BkTree::new(Metric, BkInRamAllocator());
+    ///
+    ///   tree.add(1);
+    ///   tree.add(2);
+    ///   tree.add(3);
+    fn add(
+        &mut self,
+        query: <<Self as BkTree<Key>>::KQ as KeyQuery>::Query,
+    ) -> Result<(), Box<dyn Error>> {
+        let mut root = self.root_mut().take();
+        let mut insert_depth: usize = 0;
+        let query_as_key: Key = <Self as BkTree<Key>>::KQ::to_key_static(&query);
+        match root {
+            None => {
+                root = Some(self.node_allocator().new_root(query_as_key)?);
+                self.incr_node_count();
+            }
+            Some(ref mut root) => {
+                let mut cur = root;
+                let mut dist = <Self as BkTree<Key>>::Metric::distance_static(
+                    <Self as BkTree<Key>>::KQ::to_query_static(cur.key()),
+                    &query,
+                );
+
+                // Find an empty child slot where the slot's distance from its node is the same as the
+                // query's distance from the same node, or that this query is already present in
+                // the tree.
+                while cur.has_child_at(dist)
+                    && (dist == 0 || !<Self as BkTree<Key>>::KQ::eq_static(cur.key(), &query))
+                {
+                    cur = cur.child_at_mut(dist).unwrap();
+                    dist = <Self as BkTree<Key>>::Metric::distance_static(
+                        <Self as BkTree<Key>>::KQ::to_query_static(cur.key()),
+                        &query,
+                    );
+                    insert_depth += 1;
+                }
+
+                assert!(
+                    !cur.has_child_at(dist)
+                        || <Self as BkTree<Key>>::KQ::eq_static(cur.key(), &query)
+                );
+                if !<Self as BkTree<Key>>::KQ::eq_static(cur.key(), &query) {
+                    let child = self.node_allocator().new_child(query_as_key)?;
+                    cur.set_child_node(dist, child);
+                    self.incr_node_count();
+                }
+            }
+        }
+        if let Some(root2) = root.take() {
+            self.root_mut().replace(root2);
+        }
+        if *self.max_depth_mut() < insert_depth {
+            *self.max_depth_mut() = insert_depth;
+        }
+        return Ok(());
+    }
+}
 
 /*
 
@@ -48,7 +149,7 @@ trait BkTreeMut<KQ, M>: BkTree<KQ, M> {
          BkInOrder::new(self.root.as_ref())
     }
 */
-
+/*
 impl<'a, K: 'a + Clone, KQ, M, N, Alloc> BkTree<'a, KQ, M, Alloc>
 where
     K: 'a + Clone,
@@ -73,7 +174,9 @@ where
         .each(callback)
     }
 }
+*/
 
+/*
 impl<'a, K: 'a + Clone, KQ, M, N, Alloc> BkTree<'a, KQ, M, Alloc>
 where
     K: 'a + Clone,
@@ -96,6 +199,7 @@ where
         BkPreOrder::new(self.root.as_ref()).each(callback);
     }
 }
+*/
 
 #[cfg(test)]
 mod tests {
@@ -104,9 +208,6 @@ mod tests {
     use crate::keys::U64Key;
     use crate::metric::hamming::HammingMetric;
     use crate::metric::strlen::StrLenMetric;
-
-    const U64_ALLOC: BkInRamAllocator<'static, u64> = BkInRamAllocator(PhantomData);
-    const STRING_ALLOC: BkInRamAllocator<'static, String> = BkInRamAllocator(PhantomData);
 
     fn hamming_tree<'a>() -> BkInRamTree<'a, U64Key, HammingMetric<u64>> {
         BkTree::new(Default::default(), &U64_ALLOC)
@@ -200,6 +301,7 @@ mod tests {
         println!("many string tree: {:?}", tree);
     }
 
+    /*
     #[test]
     fn can_add_find_exact_match() {
         let mut tree = strlen_tree();
@@ -228,4 +330,5 @@ mod tests {
         tree.find_each("foo", 1, |_, k| results.push(k.clone()));
         assert_eq!(vec!["quux", "left", "ship", "foo", "bar", "baz"], results);
     }
+    */
 }
