@@ -27,6 +27,14 @@ impl ExtensibleMmapMut {
         })
     }
 
+    pub fn len(&self) -> usize {
+        return self.alloc;
+    }
+
+    pub fn capacity(&self) -> usize {
+        return self.ram.len();
+    }
+
     pub fn next_offset(&self) -> usize {
         self.alloc
     }
@@ -61,6 +69,7 @@ impl ExtensibleMmapMut {
         let start = self.alloc;
         let end = self.alloc + additional;
         self.ensure_capacity(end)?;
+        self.alloc = end;
         return Ok((start, &mut self.ram[start..end]));
     }
 }

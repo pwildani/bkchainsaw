@@ -88,6 +88,7 @@ fn walk(
             key_buffer: RefCell::new(alloc.keys.ram_mut()),
             node_buffer: RefCell::new(alloc.nodes.ram_mut()),
         };
+        // println!("{} == {}", offset, node.key);
         mirror.set_key(node.key)?;
         mirror.set_dist(dist)?;
         mirror.set_num_children(children.len())?;
@@ -135,6 +136,9 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
         alloc.keys.alloc_bytes(KEY_SIZE as usize)?;
         walk(&mut alloc, 0, 0, &node)?;
     }
+
+    println!("nodes bytes: {} / {}", alloc.nodes.len(), alloc.nodes.capacity());
+    println!("keys bytes: {} / {}", alloc.keys.len(), alloc.keys.capacity());
 
     // Step 3: build the header (key offset = nodes.lengths
     // Step 4: Checksum: header + nodes + bytes
