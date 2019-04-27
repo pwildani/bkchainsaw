@@ -1,4 +1,5 @@
 extern crate bkchainsaw;
+extern crate chrono;
 
 use std::boxed::Box;
 use std::cell::RefCell;
@@ -6,10 +7,9 @@ use std::cmp::max;
 use std::env;
 use std::error::Error;
 use std::fs::File;
+use std::io;
 use std::io::Result as IoResult;
-use std::io::Write as IOWrite;
-use std::io::{BufRead, BufReader, BufWriter};
-use std::io::{Seek, SeekFrom};
+use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -29,6 +29,8 @@ use bkchainsaw::extensible_mmap::ExtensibleMmapMut;
 #[macro_use]
 extern crate structopt;
 
+use chrono::{DateTime, Utc};
+use sha2::{Digest, Sha256};
 use structopt::StructOpt;
 use tempfile;
 
@@ -75,27 +77,28 @@ fn walk(
     let (child_offset, _) = alloc
         .nodes
         .alloc_bytes(NODE_SIZE as usize * children.len())?;
+    let (ko, _) = alloc.keys.alloc_bytes(KEY_SIZE as usize * children.len())?;
     // F64Node8 can compute where to put its key.
     // Future work: for variable sized keys, the key offset calculated here needs to be
     // passed forward.
-    let (_, _) = alloc.keys.alloc_bytes(KEY_SIZE as usize)?;
     // this block should be a  fn render_at ... , but that requires building the children vector twice.
     {
         // This should be safe because the space for this node was allocated in the previous
         // call.
+        let kbuflen = alloc.keys.len();
+        let knodelen = alloc.nodes.len();
         let mut mirror = F64BNode8 {
             offset,
             key_buffer: RefCell::new(alloc.keys.ram_mut()),
             node_buffer: RefCell::new(alloc.nodes.ram_mut()),
         };
-        // println!("{} == {}", offset, node.key);
         mirror.set_key(node.key)?;
         mirror.set_dist(dist)?;
         mirror.set_num_children(children.len())?;
         mirror.set_child_offset(child_offset)?;
     }
 
-    for (i, (dist, child)) in children.iter().enumerate() {
+    for (i, (dist, child)) in children.iter().rev().enumerate() {
         let offset = child_offset + NODE_SIZE as usize * i;
         walk(alloc, offset, *dist, child)?;
     }
@@ -137,12 +140,53 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
         walk(&mut alloc, 0, 0, &node)?;
     }
 
-    println!("nodes bytes: {} / {}", alloc.nodes.len(), alloc.nodes.capacity());
-    println!("keys bytes: {} / {}", alloc.keys.len(), alloc.keys.capacity());
+    println!(
+        "nodes bytes: {} / {}",
+        alloc.nodes.len(),
+        alloc.nodes.capacity()
+    );
+    println!(
+        "keys bytes: {} / {}",
+        alloc.keys.len(),
+        alloc.keys.capacity()
+    );
 
     // Step 3: build the header (key offset = nodes.lengths
-    // Step 4: Checksum: header + nodes + bytes
+    let mut descr: bkfile::FileDescrHeader = Default::default();
+    descr.created_on = Utc::now().to_rfc3339();
+    descr.node_format = "8 bits distance, 8 bits child".to_string();
+    descr.node_bytes = alloc.nodes.len() as u64;
+    descr.node_offset = 0;
+    descr.node_count = tree.node_count;
+    descr.key_format = "fixed 64 bits".to_string();
+    descr.key_offset = alloc.nodes.len() as u64;
+    descr.key_bytes = alloc.keys.len() as u64;
+    let header = descr.encode(bkfile::PREFIX_SIZE);
+    println!("{:#?}", descr);
+
+    // Step 4: Checksum: header + nodes + keys
+    let mut hasher = Sha256::new();
+    hasher.write(&header)?;
+    hasher.write(&alloc.nodes.ram_mut())?;
+    hasher.write(&alloc.keys.ram_mut())?;
+
     // Step 5: write it out
+    let mut out = BufWriter::new(File::create(opts.output_filename)?);
+    write!(&mut out, "{}\n", bkfile::MAGIC_VERSION)?;
+    write!(
+        &mut out,
+        "{}: {:064x}\n",
+        bkfile::HASH_HEADER_NAME,
+        hasher.result()
+    )?;
+    assert_eq!(
+        bkfile::PREFIX_SIZE,
+        out.seek(SeekFrom::Current(0))? as usize
+    );
+    io::copy(&mut header.as_slice(), &mut out)?;
+    io::copy(&mut alloc.nodes.ram(), &mut out)?;
+    io::copy(&mut alloc.keys.ram(), &mut out)?;
+    out.flush()?;
 
     Ok(())
 }

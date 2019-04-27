@@ -39,8 +39,12 @@ impl ExtensibleMmapMut {
         self.alloc
     }
 
+    pub fn ram(&self) -> &[u8] {
+        &self.ram[0..self.alloc]
+    }
+
     pub fn ram_mut(&mut self) -> &mut [u8] {
-        &mut *self.ram
+        &mut self.ram[0..self.alloc]
     }
 
     pub fn ensure_capacity(&mut self, len: usize) -> IoResult<()> {

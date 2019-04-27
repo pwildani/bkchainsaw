@@ -72,23 +72,23 @@ impl TrimStart for Vec<u8> {
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct FileDescrHeader {
     #[serde(rename = "Created-On")]
-    created_on: String,
+    pub created_on: String,
 
     #[serde(rename = "Node-Format")]
-    node_format: String,
+    pub node_format: String,
     #[serde(rename = "Node-Bytes")]
-    node_bytes: u64,
+    pub node_bytes: u64,
     #[serde(rename = "Node-Offset")]
-    node_offset: u64,
+    pub node_offset: u64,
     #[serde(rename = "Node-Count")]
-    node_count: u64,
+    pub node_count: u64,
 
     #[serde(rename = "Key-Format")]
-    key_format: String,
+    pub key_format: String,
     #[serde(rename = "Key-Offset")]
-    key_offset: u64,
+    pub key_offset: u64,
     #[serde(rename = "Key-Bytes")]
-    key_bytes: u64,
+    pub key_bytes: u64,
 
     #[serde(rename = "Padding", default)]
     padding: String,
@@ -117,6 +117,7 @@ pub struct Header {
 
 pub const MAGIC_VERSION: &'static str = "BKTREE: 0000";
 pub const HASH_HEADER_NAME: &'static str = "SHA256";
+pub const PREFIX_SIZE: usize = 86;
 
 impl Header {
     pub fn read(
