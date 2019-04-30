@@ -1,6 +1,7 @@
 use std::cmp::max;
 use std::fs::File;
 use std::io::Result as IoResult;
+use std::ops::{Deref, DerefMut};
 
 use memmap::MmapMut;
 use memmap::MmapOptions;
@@ -75,5 +76,19 @@ impl ExtensibleMmapMut {
         self.ensure_capacity(end)?;
         self.alloc = end;
         return Ok((start, &mut self.ram[start..end]));
+    }
+}
+
+
+impl Deref for ExtensibleMmapMut {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        return self.ram();
+    }
+}
+
+impl DerefMut for ExtensibleMmapMut {
+    fn deref_mut(&mut self) -> &mut [u8] {
+        return self.ram_mut();
     }
 }

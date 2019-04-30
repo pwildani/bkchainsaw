@@ -5,14 +5,16 @@
  *   Checksum: "SHA256: " + hex sha-256 of the remainder of the file following this newline + "\n---\n"
  *   CBOR encoded header as a map:
  *       "Created-On":  ISO-8601 timestamp
- *       "Node-Format": "8 bits distance, 8 bits child"
- *       "Node-Bytes": integer, node storage size
- *       "Node-Offset": integer, byte offset after the end of the header where nodes start
- *           Should be "0\n"
  *       "Node-Count": optional, integer, number of nodes
- *       "Key-Format": "fixed 64 bits" (future work: "variable length\n")
- *       "Key-Offset": integer, byte offset after header where keys start
- *       "Key-Bytes": integer, key storage size
+ *        "Sections": {
+ *           "Key": Key data, Child: Child indicies, Num: child counts, Dist: distances between nodes
+ *           "Key" | "Child" | "Num" | "Dist": {
+ *              ItemSize: integer, byte size of a single value in this section. unset implies variable size
+ *              Bytes: integer, total bytes
+ *              Offset: integer, byte ofset after the end of the header where this section starts
+ *           }
+ *        }
+ *
  *       "Padding:": optional if lucky, '.' repeated (0 to 63 times) until the byte after the end
  *           of header marker is 64-byte aligned from the start of the file.
  *
@@ -69,26 +71,37 @@ impl TrimStart for Vec<u8> {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Copy, Clone, Default, Deserialize, Serialize)]
+pub struct FileSection {
+    #[serde(rename = "ItemSize")]
+    pub item_size: Option<u64>,
+    #[serde(rename = "Bytes")]
+    pub bytes: u64,
+    #[serde(rename = "Offset")]
+    pub offset: u64,
+}
+
+#[derive(Debug, Copy, Clone, Default, Deserialize, Serialize)]
+pub struct FileSections {
+    #[serde(rename = "Dist")]
+    pub dist: Option<FileSection>,
+    #[serde(rename = "Child")]
+    pub child_index: Option<FileSection>,
+    #[serde(rename = "Num")]
+    pub num_children: Option<FileSection>,
+    #[serde(rename = "Key")]
+    pub key: Option<FileSection>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
 pub struct FileDescrHeader {
     #[serde(rename = "Created-On")]
     pub created_on: String,
 
-    #[serde(rename = "Node-Format")]
-    pub node_format: String,
-    #[serde(rename = "Node-Bytes")]
-    pub node_bytes: u64,
-    #[serde(rename = "Node-Offset")]
-    pub node_offset: u64,
     #[serde(rename = "Node-Count")]
     pub node_count: u64,
 
-    #[serde(rename = "Key-Format")]
-    pub key_format: String,
-    #[serde(rename = "Key-Offset")]
-    pub key_offset: u64,
-    #[serde(rename = "Key-Bytes")]
-    pub key_bytes: u64,
+    pub section: FileSections,
 
     #[serde(rename = "Padding", default)]
     padding: String,
@@ -96,14 +109,14 @@ pub struct FileDescrHeader {
 
 impl FileDescrHeader {
     pub fn encode(&mut self, offset: usize) -> Vec<u8> {
-        // Ensure 64 byte alignment
+        // Ensure 64 byte alignment for the byte following the header.
         const ALIGNMENT: usize = 64;
         self.padding = "".to_string();
         let mut buffer = serde_cbor::to_vec(&self).unwrap();
-        let padding = ALIGNMENT - (offset + buffer.len() + 1) % ALIGNMENT;
+        let padding = ALIGNMENT - (offset + buffer.len()+1) % ALIGNMENT;
         self.padding = ".".repeat(padding);
         buffer = serde_cbor::to_vec(&self).unwrap();
-        assert_eq!(0, (offset + buffer.len()) % ALIGNMENT);
+        assert_eq!(63, (offset + buffer.len()) % ALIGNMENT);
         return buffer;
     }
 }
