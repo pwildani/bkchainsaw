@@ -1,28 +1,15 @@
-use crate::metric::Metric;
-use crate::Dist;
+pub trait AsQuery<Q: ?Sized> {
+    fn as_query(&self) -> &Q;
+}
 
-pub trait KeyQuery: Default {
-    type Key: Clone;
-    type Query: ?Sized;
+impl AsQuery<u64> for u64 {
+    fn as_query(&self) -> &u64 {
+        self
+    }
+}
 
-    fn distance<M: Metric<Self::Query>>(
-        &self,
-        metric: &M,
-        key: &Self::Key,
-        query: &Self::Query,
-    ) -> Dist;
-
-    fn distance_static<M: Metric<Self::Query>>(
-        metric: &M,
-        key: &Self::Key,
-        query: &Self::Query,
-    ) -> Dist;
-
-    fn to_key(&self, query: &Self::Query) -> Self::Key;
-    fn eq(&self, key: &Self::Key, query: &Self::Query) -> bool;
-
-    fn to_key_static(query: &Self::Query) -> Self::Key;
-    fn eq_static(key: &Self::Key, query: &Self::Query) -> bool;
-
-    fn to_query_static(key: &Self::Key) -> &Self::Query;
+impl AsQuery<str> for String {
+    fn as_query(&self) -> &str {
+        self.as_str()
+    }
 }

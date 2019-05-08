@@ -14,7 +14,10 @@ pub trait BkNode {
     // fn children_iter(&self) -> impl Iterator<Item = (Dist, &Self)>;
 }
 
-pub trait BkNodeMut: BkNode {
-    fn set_child_node(&mut self, distance: Dist, node: Self);
+pub trait BkNodeMut: BkNode
+where
+    Self: Sized,
+{
     fn child_at_mut(&mut self, dist: Dist) -> Option<&mut Self>;
+    fn ref_child_at_mut(&mut self, dist: Dist) -> &mut Option<Self>;
 }

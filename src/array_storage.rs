@@ -6,14 +6,14 @@
 */
 use std::cell::RefCell;
 use std::error::Error;
-use std::rc::Rc;
 use std::fmt;
 use std::fmt::Debug;
+use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
 
-use crate::Dist;
 use crate::extensible_mmap::ExtensibleMmapMut;
+use crate::Dist;
 
 pub trait InStorageNode {
     fn encoding_size(&self) -> usize;
@@ -35,7 +35,6 @@ pub trait InStorageNodeMut: InStorageNode {
     fn set_child_offset(&mut self, child_offset: usize) -> NodeMutationResult;
 }
 
-
 /**
  * FixedKeys
  * parallel arrays for everything, which makes the file level config much easier
@@ -43,7 +42,7 @@ pub trait InStorageNodeMut: InStorageNode {
  * num children
  * dist from parent
  * keys
- * 
+ *
  * Each field is the number of bytes needed for each element.
  * A node is an index and a config
 */
@@ -71,17 +70,17 @@ impl<'a> Debug for FNode<'a> {
     }
 }
 
-fn write_le_u64(dest: &mut [u8], index: usize, data_size: usize, value: u64) -> Option<()>{
-    let buf = dest.get_mut(index..index+data_size)?;
-    let mut reorder_buf : [u8;8] = [0; 8];
+fn write_le_u64(dest: &mut [u8], index: usize, data_size: usize, value: u64) -> Option<()> {
+    let buf = dest.get_mut(index..index + data_size)?;
+    let mut reorder_buf: [u8; 8] = [0; 8];
     LittleEndian::write_u64(&mut reorder_buf, value);
     buf.copy_from_slice(&reorder_buf[0..data_size]);
     Some(())
 }
 
-fn read_le_u64(src: &[u8], index: usize, data_size: usize) -> Option<u64>{
+fn read_le_u64(src: &[u8], index: usize, data_size: usize) -> Option<u64> {
     let buf = src.get(index..data_size)?;
-    let mut reorder_buf : [u8;8] = [0; 8];
+    let mut reorder_buf: [u8; 8] = [0; 8];
     (&mut reorder_buf[0..data_size]).copy_from_slice(buf);
     let value = LittleEndian::read_u64(&reorder_buf);
     Some(value)
@@ -97,7 +96,12 @@ impl<'a> InStorageNode for FNode<'a> {
     }
 
     fn child_count(&self) -> Option<usize> {
-        read_le_u64(&self.num_children.borrow(), self.index, self.config.num_children).and_then(|c| Some(c as usize))
+        read_le_u64(
+            &self.num_children.borrow(),
+            self.index,
+            self.config.num_children,
+        )
+        .and_then(|c| Some(c as usize))
     }
 
     fn children_offset(&self) -> Option<usize> {
@@ -105,11 +109,11 @@ impl<'a> InStorageNode for FNode<'a> {
             &self.child_index.borrow(),
             self.index,
             self.config.child_index,
-        ).and_then(|c| Some(c as usize))?;
+        )
+        .and_then(|c| Some(c as usize))?;
         if c > 0 {
             Some(c)
-        }
-        else {
+        } else {
             None
         }
     }
@@ -128,7 +132,8 @@ impl<'a> FNode<'a> {
             self.index,
             self.config.key,
             key.into(),
-        ).ok_or("out of space for key")?;
+        )
+        .ok_or("out of space for key")?;
         Ok(())
     }
     pub fn set_dist(&mut self, dist: Dist) -> NodeMutationResult {
@@ -137,7 +142,8 @@ impl<'a> FNode<'a> {
             self.index,
             self.config.dist,
             dist as u64,
-        ).ok_or("out of space for dist")?;
+        )
+        .ok_or("out of space for dist")?;
         Ok(())
     }
     pub fn set_num_children(&mut self, n: usize) -> NodeMutationResult {
@@ -146,7 +152,8 @@ impl<'a> FNode<'a> {
             self.index,
             self.config.num_children,
             n as u64,
-        ).ok_or("out of space for child count")?;
+        )
+        .ok_or("out of space for child count")?;
         Ok(())
     }
     pub fn set_child_index(&mut self, index: usize) -> NodeMutationResult {
@@ -155,11 +162,11 @@ impl<'a> FNode<'a> {
             self.index,
             self.config.child_index,
             index as u64,
-        ).ok_or("out of space for child index")?;
+        )
+        .ok_or("out of space for child index")?;
         Ok(())
     }
 }
-
 
 /**
  * Variable Key Bytes, 16 bit child counters and distances.
@@ -263,7 +270,7 @@ impl<'a> F64BNode8<'a> {
         if end <= self.key_buffer.borrow().len() {
             return Some(self.key_offset()? + 8);
         }
-        return None;
+        None
     }
     fn key(&self) -> Option<u64> {
         let start = self.key_offset()?;
@@ -377,7 +384,7 @@ fn get_slice<'a: 'b, 'b>(
     if buf.len() >= end {
         return Some(&buf[start..end]);
     }
-    return None;
+    None
 }
 
 fn get_slice_mut<'a: 'b, 'b>(
@@ -391,7 +398,7 @@ fn get_slice_mut<'a: 'b, 'b>(
     if buf.len() >= end {
         return Some(&mut buf[start..end]);
     }
-    return None;
+    None
 }
 
 #[cfg(test)]

@@ -15,7 +15,6 @@ pub mod bknode;
 pub mod bktree;
 pub mod bktreemut;
 pub mod keyquery;
-pub mod keys;
 pub mod nodeallocator;
 
 pub mod extensible_mmap;

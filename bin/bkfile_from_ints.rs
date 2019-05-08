@@ -3,42 +3,29 @@ extern crate chrono;
 
 use std::boxed::Box;
 use std::cell::RefCell;
-use std::cmp::max;
 use std::env;
 use std::error::Error;
 use std::fs::File;
 use std::io;
-use std::io::Result as IoResult;
-use std::io::{BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write};
+use std::io::{BufRead, BufReader, BufWriter, Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
 
-use bkchainsaw::array_storage::F64BNode8;
 use bkchainsaw::array_storage::{FNode, FixedKeysConfig};
-use bkchainsaw::array_storage::{InStorageNode, InStorageNodeMut};
 use bkchainsaw::bk;
 use bkchainsaw::bkfile;
-use bkchainsaw::bkfile::{FileSection, FileSections};
+use bkchainsaw::bkfile::FileSection;
 use bkchainsaw::bknode::BkNode;
-use bkchainsaw::bktree;
 use bkchainsaw::bktree::BkTreeAdd;
-use bkchainsaw::bktreemut;
-use bkchainsaw::keys;
-use bkchainsaw::HammingMetric;
 use bkchainsaw::Dist;
+use bkchainsaw::HammingMetric;
 
 use bkchainsaw::extensible_mmap::ExtensibleMmapMut;
 
-#[macro_use]
-extern crate structopt;
-
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use sha2::{Digest, Sha256};
 use structopt::StructOpt;
 use tempfile;
-
-use memmap::MmapMut;
-use memmap::MmapOptions;
 
 #[derive(Debug, Default, StructOpt)]
 #[structopt(name = "bkfile_from_ints", about = "Build a bkfile")]
@@ -56,10 +43,6 @@ struct CommandLineArgs {
     preserve_intermediates: bool,
 }
 
-// TODO: handle more file types than fixed u64 keys with <256 distances and children
-// F64BNode8 uses 8 bytes per node
-const NODE_SIZE: u64 = 8;
-
 // F64BNode8 uses 8 bytes per key
 const KEY_SIZE: u64 = 8;
 
@@ -75,16 +58,24 @@ struct InFileAllocator {
 
 impl InFileAllocator {
     fn alloc(&mut self, n: u64) -> Result<u64, Box<dyn Error>> {
-        self.child_index.borrow_mut().alloc_bytes(self.config.child_index * n as usize)?;
-        self.dist.borrow_mut().alloc_bytes(self.config.dist * n as usize)?;
-        self.num_children.borrow_mut().alloc_bytes(self.config.num_children * n as usize)?;
-        self.keys.borrow_mut().alloc_bytes(self.config.key * n as usize)?;
+        self.child_index
+            .borrow_mut()
+            .alloc_bytes(self.config.child_index * n as usize)?;
+        self.dist
+            .borrow_mut()
+            .alloc_bytes(self.config.dist * n as usize)?;
+        self.num_children
+            .borrow_mut()
+            .alloc_bytes(self.config.num_children * n as usize)?;
+        self.keys
+            .borrow_mut()
+            .alloc_bytes(self.config.key * n as usize)?;
         let start = self.index;
         self.index += n;
-        return Ok(start);
+        Ok(start)
     }
 
-    fn fnode<'s>(&'s self, index: u64) -> FNode<'s> {
+    fn fnode(&self, index: u64) -> FNode<'_> {
         FNode {
             config: &self.config,
             index: index as usize,
@@ -109,8 +100,12 @@ fn walk<'a, 'c, 'n>(
     // F64Node8 can compute where to put its key.
     // Future work: for variable sized keys, the key offset calculated here needs to be
     // passed forward.
-    
-    let child_start_index = if children.len() == 0 { 0 } else { alloc.alloc(children.len() as u64)?};
+
+    let child_start_index = if children.is_empty() {
+        0
+    } else {
+        alloc.alloc(children.len() as u64)?
+    };
     {
         // This should be safe because the space for this node was allocated in the previous
         // call.
@@ -128,29 +123,28 @@ fn walk<'a, 'c, 'n>(
     Ok(())
 }
 
-
 fn byte_size_for_max_val(i: u64) -> usize {
-    if i < 2<<8 {
-        return 1;
-    } else if i < 2<<16 {
-        return 2;
-    } else if i < 2<<24 {
-        return 3;
-    } else if i < 2<<32 {
-        return 4;
-    } else if i < 2<<40 {
-        return 5;
-    } else if i < 2<<48 {
-        return 6;
-    } else if i < 2<<56 {
-        return 7;
+    if i < 2 << 8 {
+        1
+    } else if i < 2 << 16 {
+        2
+    } else if i < 2 << 24 {
+        3
+    } else if i < 2 << 32 {
+        4
+    } else if i < 2 << 40 {
+        5
+    } else if i < 2 << 48 {
+        6
+    } else if i < 2 << 56 {
+        7
     } else {
-        return 8;
+        8
     }
 }
 
 fn align(alignment: u64, value: u64) -> u64 {
-    return value + alignment - value % alignment;
+    value + alignment - value % alignment
 }
 
 fn main() -> Result<(), Box<dyn Error + 'static>> {
@@ -159,12 +153,8 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     println!("args: {:?}", args);
 
     // Step 1: build the tree in RAM
-    let mut tree: bk::BkInRamTree<
-        '_,
-        keys::U64Key,
-        HammingMetric<u64>,
-        bk::BkInRamAllocator<'_, u64>,
-    > = bk::BkInRamTree::new(HammingMetric::default(), &bk::U64_ALLOC);
+    let mut tree: bk::BkInRamTree<'_, HammingMetric<u64>, bk::BkInRamAllocator<'_, u64>> =
+        bk::BkInRamTree::new(&bk::U64_ALLOC);
     let numbers = BufReader::new(File::open(args[1].clone())?).lines();
     for numstr in numbers {
         let num: u64 = numstr?.parse()?;
@@ -188,12 +178,12 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     // TODO: measure max distance
     let dist_size = byte_size_for_max_val(64);
     // TODO: handle variable key size
-    let key_size = 8;
+    let key_size = KEY_SIZE;
     let config = FixedKeysConfig {
         child_index: child_index_size,
         num_children: num_children_size,
         dist: dist_size,
-        key: 8,
+        key: key_size as usize,
     };
     fn rref<T>(val: T) -> Rc<RefCell<T>> {
         Rc::new(RefCell::new(val))
@@ -218,7 +208,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
         alloc.keys.borrow().capacity()
     );
 
-    let mut sections :Vec<(u64, Rc<RefCell<ExtensibleMmapMut>>)> = Vec::new();
+    let mut sections: Vec<(u64, Rc<RefCell<ExtensibleMmapMut>>)> = Vec::new();
 
     // Step 3: build the header (key offset = nodes.lengths
     let mut descr: bkfile::FileDescrHeader = Default::default();
@@ -226,12 +216,18 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     descr.node_count = tree.node_count;
 
     let mut offset = 0;
-    let mut add_section = |dest: &mut Option<FileSection>, item_size: usize, bytes: Rc<RefCell<ExtensibleMmapMut>>| {
+    let mut add_section = |dest: &mut Option<FileSection>,
+                           item_size: usize,
+                           bytes: Rc<RefCell<ExtensibleMmapMut>>| {
         let len = bytes.borrow().len() as u64;
         dest.replace(FileSection {
             offset,
             bytes: len,
-            item_size: if item_size > 0 { Some(item_size as u64) } else { None },
+            item_size: if item_size > 0 {
+                Some(item_size as u64)
+            } else {
+                None
+            },
         });
         sections.push((offset, bytes));
         offset = align(64, offset + len);
@@ -239,8 +235,16 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     };
 
     add_section(&mut descr.section.dist, config.dist, alloc.dist);
-    add_section(&mut descr.section.child_index, config.child_index, alloc.child_index);
-    add_section(&mut descr.section.num_children, config.num_children, alloc.num_children);
+    add_section(
+        &mut descr.section.child_index,
+        config.child_index,
+        alloc.child_index,
+    );
+    add_section(
+        &mut descr.section.num_children,
+        config.num_children,
+        alloc.num_children,
+    );
     add_section(&mut descr.section.key, config.key, alloc.keys);
 
     let header = descr.encode(bkfile::PREFIX_SIZE);
@@ -248,15 +252,18 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
 
     // Step 4: Checksum: header + sections
     let mut hasher = Sha256::new();
-    hasher.write(&header)?;
+    hasher.write_all(&header)?;
     let mut pos = 0;
     for (offset, ram) in sections.iter() {
-        for _ in pos .. *offset {
-            hasher.write(&[0u8])?;
-            pos += 1;
+        let mut n = 0;
+        for _ in pos..*offset {
+            hasher.write_all(&[0u8])?;
+            n += 1;
         }
+        assert_eq!(n, offset - pos);
+        pos += offset - pos;
         assert_eq!(pos, *offset);
-        hasher.write(ram.borrow_mut().ram())?;
+        hasher.write_all(ram.borrow_mut().ram())?;
         pos += ram.borrow().len() as u64;
     }
 
@@ -276,11 +283,10 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     io::copy(&mut header.as_slice(), &mut out)?;
     let mut pos = 0;
     for (offset, ref mut ram) in sections {
-        for _ in pos .. offset {
-            out.write(&[0u8])?;
-            pos += 1;
+        for _ in pos..offset {
+            out.write_all(&[0u8])?;
         }
-        assert_eq!(pos, offset);
+        pos = offset;
         io::copy(&mut ram.borrow_mut().ram_mut().as_ref(), &mut out)?;
         pos += ram.borrow().len() as u64;
     }

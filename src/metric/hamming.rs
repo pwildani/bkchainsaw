@@ -5,7 +5,6 @@ use crate::metric::Metric;
 use crate::Dist;
 
 pub trait CountOnes {
-    #[inline]
     fn count_ones(self) -> u32;
 }
 impl CountOnes for u8 {
@@ -46,18 +45,15 @@ where
     I: BitXor<I>,
     <I as BitXor<I>>::Output: CountOnes;
 
-impl<I> Metric<I> for HammingMetric<I>
+impl<I> Metric for HammingMetric<I>
 where
     I: Copy + BitXor<I>,
     <I as BitXor<I>>::Output: CountOnes,
 {
-    #[inline]
-    fn distance(&self, k1: &I, k2: &I) -> Dist {
-        (*k1 ^ *k2).count_ones() as usize
-    }
+    type Query = I;
 
     #[inline]
-    fn distance_static(k1: &I, k2: &I) -> Dist {
+    fn distance(k1: &I, k2: &I) -> Dist {
         (*k1 ^ *k2).count_ones() as usize
     }
 }

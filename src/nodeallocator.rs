@@ -8,6 +8,5 @@ pub trait NodeAllocator<'a> {
     type Node;
     // TODO: type AllocationError: Error;
 
-    fn new_root(&'a self, key: Self::Key) -> Result<Self::Node, Box<dyn Error>>;
     fn new_child(&'a self, key: Self::Key) -> Result<Self::Node, Box<dyn Error>>;
 }

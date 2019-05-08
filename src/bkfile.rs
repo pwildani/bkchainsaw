@@ -35,7 +35,7 @@ use sha2::{Digest, Sha256};
 use std::error;
 use std::io;
 
-fn open_mmap(filename: &str, offset: usize, length: usize) -> IOResult<Mmap> {
+fn open_mmap(filename: &str) -> IOResult<Mmap> {
     let file = File::open(filename)?;
     // let mmap = unsafe { MmapOptions::new().map(&file)? };
     let mmap = unsafe { Mmap::map(&file)? };
@@ -56,7 +56,7 @@ impl TrimStart for String {
                 return chars.collect::<String>();
             }
         }
-        return "".to_string();
+        "".to_string()
     }
 }
 
@@ -67,7 +67,7 @@ impl TrimStart for Vec<u8> {
         while self[i] == val {
             i += 1;
         }
-        return (self)[i..].to_vec();
+        (self)[i..].to_vec()
     }
 }
 
@@ -113,11 +113,11 @@ impl FileDescrHeader {
         const ALIGNMENT: usize = 64;
         self.padding = "".to_string();
         let mut buffer = serde_cbor::to_vec(&self).unwrap();
-        let padding = ALIGNMENT - (offset + buffer.len()+1) % ALIGNMENT;
+        let padding = ALIGNMENT - (offset + buffer.len() + 1) % ALIGNMENT;
         self.padding = ".".repeat(padding);
         buffer = serde_cbor::to_vec(&self).unwrap();
         assert_eq!(63, (offset + buffer.len()) % ALIGNMENT);
-        return buffer;
+        buffer
     }
 }
 
@@ -128,8 +128,8 @@ pub struct Header {
     descr: FileDescrHeader,
 }
 
-pub const MAGIC_VERSION: &'static str = "BKTREE: 0000";
-pub const HASH_HEADER_NAME: &'static str = "SHA256";
+pub const MAGIC_VERSION: &str = "BKTREE: 0000";
+pub const HASH_HEADER_NAME: &str = "SHA256";
 pub const PREFIX_SIZE: usize = 86;
 
 impl Header {
@@ -141,25 +141,25 @@ impl Header {
         let mut reader = BufReader::new(file);
 
         // Check the magic number
-        reader.read_until('\n' as u8, &mut header.version)?;
+        reader.read_until(b'\n' as u8, &mut header.version)?;
         if header.version != MAGIC_VERSION.as_bytes() {
             return Err("Unknown file format (expected \"BKTREE: 0000\")".into());
         }
 
         // Read the checksum
         let mut checksum_type: Vec<u8> = Vec::new();
-        reader.read_until(':' as u8, &mut checksum_type)?;
+        reader.read_until(b':' as u8, &mut checksum_type)?;
         if checksum_type != HASH_HEADER_NAME.as_bytes() {
             return Err("Unknown checksum format (expected \"SHA256\")".into());
         }
         let mut checksum: Vec<u8> = Vec::new();
-        reader.read_until('\n' as u8, &mut checksum);
-        header.checksum = checksum.trim_start_matches(' ' as u8);
+        reader.read_until('\n' as u8, &mut checksum)?;
+        header.checksum = checksum.trim_start_matches(b' ' as u8);
 
         let descr_start = reader.seek(SeekFrom::Current(0))?;
         if verify_checksum {
             let mut hasher = Sha256::new();
-            let n = io::copy(&mut reader, &mut hasher)?;
+            io::copy(&mut reader, &mut hasher)?;
             let found = format!("{:x}", hasher.result());
             if found.as_bytes() != header.checksum.as_slice() {
                 return Err(format!(
@@ -171,6 +171,6 @@ impl Header {
         }
         reader.seek(SeekFrom::Start(descr_start))?;
 
-        return Ok(header);
+        Ok(header)
     }
 }

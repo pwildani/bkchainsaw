@@ -7,8 +7,7 @@ use std::option::Option;
 use std::vec::Vec;
 
 use crate::bknode::{BkNode, BkNodeMut};
-use crate::bktree::{BkTree, BkTreeAdd, BkTreeRootMut};
-use crate::keyquery::KeyQuery;
+use crate::bktree::{BkTree, BkTreeRootMut};
 use crate::metric::Metric;
 
 use crate::nodeallocator::NodeAllocator;
@@ -25,8 +24,8 @@ pub struct BkInRam<K> {
 impl<K> BkInRam<K> {
     pub fn new(key: K) -> BkInRam<K> {
         BkInRam {
-            key: key,
-            children: Vec::with_capacity(16),
+            key,
+            children: Vec::with_capacity(0),
         }
     }
 
@@ -37,7 +36,7 @@ impl<K> BkInRam<K> {
             // the child vector.
             .enumerate()
             .filter(|(_, child)| child.is_some())
-            .map(|(dist, child)| (dist.into(), child.as_ref().unwrap()))
+            .map(|(dist, child)| (dist, child.as_ref().unwrap()))
             .rev() // Find here looks at the last child first, and things play nicer if the closest is first.
     }
 }
@@ -73,16 +72,14 @@ impl<'a, K> BkNodeMut for BkInRam<K> {
     fn child_at_mut(&mut self, dist: Dist) -> Option<&mut Self> {
         match self.children.get_mut(dist) {
             None | Some(None) => None,
-            Some(child @ Some(_)) => child.as_mut(),
+            Some(Some(ref mut child)) => Some(child),
         }
     }
-
-    fn set_child_node(&mut self, dist: Dist, node: Self) {
+    fn ref_child_at_mut(&mut self, dist: Dist) -> &mut Option<Self> {
         if self.children.len() <= dist {
             self.children.resize_with(dist + 1, || None);
         }
-        assert!(!self.has_child_at(dist));
-        self.children[dist] = Some(node);
+        &mut self.children[dist]
     }
 }
 
@@ -114,10 +111,6 @@ impl<'a, K: Clone> NodeAllocator<'a> for BkInRamAllocator<'a, K> {
     // Can't error.
     //type AllocationError = Box<dyn Error>;
 
-    fn new_root(&'a self, key: K) -> Result<Self::Node, Box<dyn Error>> {
-        Ok(BkInRam::new(key))
-    }
-
     fn new_child(&'a self, key: K) -> Result<Self::Node, Box<dyn Error>> {
         Ok(BkInRam::new(key))
     }
@@ -126,26 +119,23 @@ impl<'a, K: Clone> NodeAllocator<'a> for BkInRamAllocator<'a, K> {
 pub const U64_ALLOC: BkInRamAllocator<'static, u64> = BkInRamAllocator(PhantomData);
 pub const STRING_ALLOC: BkInRamAllocator<'static, String> = BkInRamAllocator(PhantomData);
 
-pub struct BkInRamTree<'nodes, KQ, M, A>
+pub struct BkInRamTree<'nodes, M, A>
 where
-    KQ: KeyQuery,
-    M: Metric<<KQ as KeyQuery>::Query>,
-    A: 'nodes + NodeAllocator<'nodes, Node = BkInRam<<KQ as KeyQuery>::Key>>,
+    M: Metric,
+    A: 'nodes + NodeAllocator<'nodes>,
 {
     pub root: Option<A::Node>,
     pub max_depth: usize,
     pub node_count: u64,
-    metric: M,
     node_allocator: &'nodes A,
-    kq: KQ,
+    phantom: PhantomData<M>,
 }
 
-impl<'nodes, K, KQ, M, A> Debug for BkInRamTree<'nodes, KQ, M, A>
+impl<'nodes, M, A, N> Debug for BkInRamTree<'nodes, M, A>
 where
-    K: Debug + Clone,
-    KQ: KeyQuery<Key = K>,
-    M: Metric<<KQ as KeyQuery>::Query>,
-    A: 'nodes + NodeAllocator<'nodes, Node = BkInRam<<KQ as KeyQuery>::Key>>,
+    M: Metric,
+    N: Debug,
+    A: 'nodes + NodeAllocator<'nodes, Node = N>,
 {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         f.debug_struct("BkInRamTree")
@@ -156,40 +146,36 @@ where
     }
 }
 
-impl<'nodes, K, KQ, M, Alloc> BkInRamTree<'nodes, KQ, M, Alloc>
+impl<'nodes, K, M, Alloc> BkInRamTree<'nodes, M, Alloc>
 where
     K: Clone,
-    KQ: KeyQuery<Key = K> + Default,
-    M: Metric<<KQ as KeyQuery>::Query>,
+    M: Metric,
     Alloc: 'nodes + NodeAllocator<'nodes, Node = BkInRam<K>>,
 {
-    pub fn new(metric: M, alloc: &'nodes Alloc) -> Self {
+    pub fn new(alloc: &'nodes Alloc) -> Self {
         BkInRamTree {
             root: None,
             max_depth: 0,
             node_count: 0,
-            metric: metric,
             node_allocator: alloc,
-            kq: Default::default(),
+            phantom: PhantomData {},
         }
     }
 }
 
-impl<'nodes, Q, K, KQ, M, Alloc> BkTreeRootMut<'nodes, K> for BkInRamTree<'nodes, KQ, M, Alloc>
+impl<'nodes, K, M, Alloc> BkTreeRootMut<'nodes, K> for BkInRamTree<'nodes, M, Alloc>
 where
-    K: Clone,
-    Q: Sized,
-    KQ: KeyQuery<Key = K, Query = Q> + Default,
-    M: Metric<<KQ as KeyQuery>::Query>,
+    K: 'nodes + Clone,
+    M: Metric,
     Alloc: 'nodes + NodeAllocator<'nodes, Node = BkInRam<K>>,
 {
     type Alloc = Alloc;
 
-    fn node_allocator(&mut self) -> &'nodes Self::Alloc {
+    fn node_allocator(&self) -> &'nodes Self::Alloc {
         &self.node_allocator
     }
 
-    fn root_mut(&mut self) -> &mut Option<<Self as BkTree<K>>::Node> {
+    fn root_mut(&mut self) -> &mut Option<<Self as BkTree<'nodes, K>>::Node> {
         &mut self.root
     }
 
@@ -202,30 +188,21 @@ where
     }
 }
 
-impl<'nodes, K, KQ, M, A, Q> BkTree<K> for BkInRamTree<'nodes, KQ, M, A>
+impl<'nodes, K, M, A> BkTree<'nodes, K> for BkInRamTree<'nodes, M, A>
 where
-    K: Clone,
-    Q: Sized,
-    KQ: KeyQuery<Key = K, Query = Q>,
-    M: Metric<Q>,
+    K: Clone + 'nodes,
+    M: Metric,
     A: 'nodes + NodeAllocator<'nodes, Node = BkInRam<K>>,
 {
-    type KQ = KQ;
     type Metric = M;
     type Node = <A as NodeAllocator<'nodes>>::Node;
 
-    fn find_each<'a, F>(
-        &'a self,
-        needle: &'a <Self::KQ as KeyQuery>::Query,
-        tolerance: Dist,
-        callback: F,
-    ) where
-        F: FnMut(Dist, &<Self::KQ as KeyQuery>::Key),
-    {
-        if let Some(ref root) = self.root {
-            let finder = BkFind::new(self.max_depth, Some(root), tolerance, needle);
-            finder.each::<KQ, M, F>(callback);
-        }
+    fn root(&self) -> &Option<Self::Node> {
+        &self.root
+    }
+
+    fn max_depth_hint(&self) -> usize {
+        self.max_depth
     }
 }
 
@@ -233,71 +210,4 @@ where
 struct BkFindEntry<'n, N: 'n + BkNode> {
     dist: Dist,
     node: &'n N,
-}
-
-pub struct BkFind<'q, 'n, Q: 'q, N: 'n>
-where
-    N: 'n + BkNode,
-{
-    tolerance: Dist,
-    needle: &'q Q,
-    root: Option<&'n N>,
-    stack: Vec<BkFindEntry<'n, N>>,
-}
-
-impl<'q, 'n, Q: 'q, N: 'n> BkFind<'q, 'n, Q, N>
-where
-    N: 'n + BkNode,
-{
-    pub fn new(max_depth_hint: usize, root: Option<&'n N>, tolerance: Dist, needle: &'q Q) -> Self {
-        let stack = Vec::with_capacity(max_depth_hint);
-        BkFind {
-            tolerance,
-            needle,
-            root,
-            stack,
-        }
-    }
-}
-
-impl<'q, 'n, Q: 'q, N: 'n, K: 'n + Clone> BkFind<'q, 'n, Q, N>
-where
-    N: 'n + BkNode<Key = K>,
-{
-    pub fn each<KQ, M, F>(mut self, mut callback: F)
-    where
-        KQ: KeyQuery<Key = <N as BkNode>::Key, Query = Q>,
-        M: Metric<Q>,
-        F: FnMut(Dist, &'n <KQ as KeyQuery>::Key),
-    {
-        if let Some(root) = self.root.take() {
-            let dist = M::distance_static(KQ::to_query_static(root.key()), self.needle);
-            self.stack.push(BkFindEntry {
-                dist: dist,
-                node: root,
-            })
-        }
-
-        while let Some(candidate) = self.stack.pop() {
-            // Enqueue the children.
-            let min: Dist = candidate.dist.saturating_sub(self.tolerance);
-            let max: Dist = candidate.dist.saturating_add(self.tolerance);
-            let children = candidate.node.children_vector();
-            for (dist, child) in children.iter() {
-                if min <= *dist && *dist <= max {
-                    let child_dist =
-                        M::distance_static(KQ::to_query_static(child.key()), self.needle);
-                    self.stack.push(BkFindEntry {
-                        dist: child_dist,
-                        node: *child,
-                    })
-                }
-            }
-
-            // And maybe yield this node.
-            if candidate.dist <= self.tolerance {
-                callback(candidate.dist, candidate.node.key());
-            }
-        }
-    }
 }

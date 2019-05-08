@@ -1,15 +1,8 @@
 extern crate bkchainsaw;
 
-use memmap::Mmap;
-use memmap::MmapOptions;
-use sha2::{Digest, Sha256};
 use std::env;
 use std::error::Error;
 use std::fs::File;
-use std::io;
-use std::io::Result as IOResult;
-use std::io::{BufRead, BufReader};
-use std::io::{Seek, SeekFrom};
 
 use bkchainsaw::bkfile;
 

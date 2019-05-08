@@ -29,11 +29,11 @@ impl ExtensibleMmapMut {
     }
 
     pub fn len(&self) -> usize {
-        return self.alloc;
+        self.alloc
     }
 
     pub fn capacity(&self) -> usize {
-        return self.ram.len();
+        self.ram.len()
     }
 
     pub fn next_offset(&self) -> usize {
@@ -63,7 +63,7 @@ impl ExtensibleMmapMut {
             self.backing.set_len(new_size as u64)?;
             self.ram.flush_async()?;
             // TODO: figure out how to drop self::ram before allocating another giant chunk of address space.
-            let mut new_ram = unsafe { MmapOptions::new().map_mut(&self.backing) }?;
+            let mut new_ram = unsafe { self.options.map_mut(&self.backing) }?;
             std::mem::swap(&mut self.ram, &mut new_ram);
             assert!(self.ram.len() >= len);
         }
@@ -75,20 +75,19 @@ impl ExtensibleMmapMut {
         let end = self.alloc + additional;
         self.ensure_capacity(end)?;
         self.alloc = end;
-        return Ok((start, &mut self.ram[start..end]));
+        Ok((start, &mut self.ram[start..end]))
     }
 }
-
 
 impl Deref for ExtensibleMmapMut {
     type Target = [u8];
     fn deref(&self) -> &[u8] {
-        return self.ram();
+        self.ram()
     }
 }
 
 impl DerefMut for ExtensibleMmapMut {
     fn deref_mut(&mut self) -> &mut [u8] {
-        return self.ram_mut();
+        self.ram_mut()
     }
 }
