@@ -6,6 +6,7 @@
  *   CBOR encoded header as a map:
  *       "Created-On":  ISO-8601 timestamp
  *       "Node-Count": optional, integer, number of nodes
+ *       "Max-Depth": optional, integer, maximum depth of the tree
  *        "Sections": {
  *           "Key": Key data, Child: Child indicies, Num: child counts, Dist: distances between nodes
  *           "Key" | "Child" | "Num" | "Dist": {
@@ -28,14 +29,14 @@
 use memmap::Mmap;
 use std::fs::File;
 use std::io::Result as IOResult;
-use std::io::{BufRead, BufReader};
+use std::io::{Read, BufRead, BufReader};
 use std::io::{Seek, SeekFrom};
 //use std::error::Error;
 use sha2::{Digest, Sha256};
 use std::error;
 use std::io;
 
-fn open_mmap(filename: &str) -> IOResult<Mmap> {
+pub fn open_mmap(filename: &str) -> IOResult<Mmap> {
     let file = File::open(filename)?;
     // let mmap = unsafe { MmapOptions::new().map(&file)? };
     let mmap = unsafe { Mmap::map(&file)? };
@@ -101,6 +102,9 @@ pub struct FileDescrHeader {
     #[serde(rename = "Node-Count")]
     pub node_count: u64,
 
+    #[serde(rename = "Node-Count")]
+    pub max_depth: u64,
+
     pub section: FileSections,
 
     #[serde(rename = "Padding", default)]
@@ -133,9 +137,8 @@ pub const HASH_HEADER_NAME: &str = "SHA256";
 pub const PREFIX_SIZE: usize = 86;
 
 impl Header {
-    pub fn read(
-        file: &mut File,
-        verify_checksum: bool,
+    pub fn read<F: Read + Seek> (
+        file: &mut F,
     ) -> Result<Header, Box<dyn error::Error + 'static>> {
         let mut header: Header = Default::default();
         let mut reader = BufReader::new(file);
@@ -156,18 +159,24 @@ impl Header {
         reader.read_until('\n' as u8, &mut checksum)?;
         header.checksum = checksum.trim_start_matches(b' ' as u8);
 
+        Ok(header)
+    }
+
+    pub fn read_verify<F: Read + Seek> (
+        file: &mut F,
+    ) -> Result<Header, Box<dyn error::Error + 'static>> {
+        let mut reader = BufReader::new(file);
+        let header = Self::read(&mut reader)?;
         let descr_start = reader.seek(SeekFrom::Current(0))?;
-        if verify_checksum {
-            let mut hasher = Sha256::new();
-            io::copy(&mut reader, &mut hasher)?;
-            let found = format!("{:x}", hasher.result());
-            if found.as_bytes() != header.checksum.as_slice() {
-                return Err(format!(
-                    "Checksum failure. Found {:?}, expected {:?}",
-                    found, header.checksum
-                )
-                .into());
-            }
+        let mut hasher = Sha256::new();
+        io::copy(&mut reader, &mut hasher)?;
+        let found = format!("{:x}", hasher.result());
+        if found.as_bytes() != header.checksum.as_slice() {
+            return Err(format!(
+                "Checksum failure. Found {:?}, expected {:?}",
+                found, header.checksum
+            )
+            .into());
         }
         reader.seek(SeekFrom::Start(descr_start))?;
 

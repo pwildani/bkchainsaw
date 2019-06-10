@@ -5,6 +5,7 @@ extern crate serde_derive;
 extern crate byteorder;
 extern crate serde_cbor;
 extern crate sha2;
+extern crate typed_arena;
 
 pub mod array_storage;
 pub mod bkfile;

@@ -75,7 +75,7 @@ impl InFileAllocator {
         Ok(start)
     }
 
-    fn fnode(&self, index: u64) -> FNode<'_> {
+    fn fnode(&self, index: u64) -> FNode<'_, ExtensibleMmapMut> {
         FNode {
             config: &self.config,
             index: index as usize,
@@ -214,6 +214,7 @@ fn main() -> Result<(), Box<dyn Error + 'static>> {
     let mut descr: bkfile::FileDescrHeader = Default::default();
     descr.created_on = Utc::now().to_rfc3339();
     descr.node_count = tree.node_count;
+    descr.max_depth = tree.max_depth as u64;
 
     let mut offset = 0;
     let mut add_section = |dest: &mut Option<FileSection>,

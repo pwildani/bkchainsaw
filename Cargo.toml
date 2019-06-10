@@ -39,3 +39,7 @@ path = "bin/bktree_from_ints.rs"
 [[bin]]
 name = "bkfile_from_ints"
 path = "bin/bkfile_from_ints.rs"
+
+[[bin]]
+name = "bkfind"
+path = "bin/bkfind.rs"

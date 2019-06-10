@@ -4,6 +4,7 @@
  *
  * All multi byte entities are stored little endian.
 */
+use std::ops::{Deref, DerefMut};
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
@@ -54,17 +55,17 @@ pub struct FixedKeysConfig {
     pub key: usize,
 }
 
-pub struct FNode<'a> {
+pub struct FNode<'a, T: ?Sized> {
     pub config: &'a FixedKeysConfig,
     pub index: usize,
 
-    pub child_index: Rc<RefCell<ExtensibleMmapMut>>,
-    pub num_children: Rc<RefCell<ExtensibleMmapMut>>,
-    pub dist: Rc<RefCell<ExtensibleMmapMut>>,
-    pub key: Rc<RefCell<ExtensibleMmapMut>>,
+    pub child_index: Rc<RefCell<T>>,
+    pub num_children: Rc<RefCell<T>>,
+    pub dist: Rc<RefCell<T>>,
+    pub key: Rc<RefCell<T>>,
 }
 
-impl<'a> Debug for FNode<'a> {
+impl<'a, T: ?Sized> Debug for FNode<'a, T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Node<@{}>", self.index)
     }
@@ -86,7 +87,7 @@ fn read_le_u64(src: &[u8], index: usize, data_size: usize) -> Option<u64> {
     Some(value)
 }
 
-impl<'a> InStorageNode for FNode<'a> {
+impl<'a, T: Deref<Target=[u8]>> InStorageNode for FNode<'a, T> {
     fn encoding_size(&self) -> usize {
         self.config.child_index + self.config.num_children + self.config.dist
     }
@@ -125,7 +126,7 @@ impl<'a> InStorageNode for FNode<'a> {
     }
 }
 
-impl<'a> FNode<'a> {
+impl<'a, T: DerefMut<Target=[u8]>> FNode<'a, T> {
     pub fn set_key<Key: Into<u64>>(&mut self, key: Key) -> NodeMutationResult {
         write_le_u64(
             &mut self.key.borrow_mut(),
