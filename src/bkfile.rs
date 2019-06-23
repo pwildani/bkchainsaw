@@ -29,14 +29,15 @@
 use memmap::Mmap;
 use std::fs::File;
 use std::io::Result as IOResult;
-use std::io::{Read, BufRead, BufReader};
+use std::io::{BufRead, BufReader, Read};
 use std::io::{Seek, SeekFrom};
 //use std::error::Error;
 use sha2::{Digest, Sha256};
 use std::error;
 use std::io;
+use std::path::PathBuf;
 
-pub fn open_mmap(filename: &str) -> IOResult<Mmap> {
+pub fn open_mmap(filename: &PathBuf) -> IOResult<Mmap> {
     let file = File::open(filename)?;
     // let mmap = unsafe { MmapOptions::new().map(&file)? };
     let mmap = unsafe { Mmap::map(&file)? };
@@ -127,9 +128,10 @@ impl FileDescrHeader {
 
 #[derive(Debug, Default)]
 pub struct Header {
-    version: Vec<u8>,
-    checksum: Vec<u8>,
-    descr: FileDescrHeader,
+    pub version: Vec<u8>,
+    pub checksum: Vec<u8>,
+    pub descr: FileDescrHeader,
+    pub end: u64,
 }
 
 pub const MAGIC_VERSION: &str = "BKTREE: 0000";
@@ -137,9 +139,7 @@ pub const HASH_HEADER_NAME: &str = "SHA256";
 pub const PREFIX_SIZE: usize = 86;
 
 impl Header {
-    pub fn read<F: Read + Seek> (
-        file: &mut F,
-    ) -> Result<Header, Box<dyn error::Error + 'static>> {
+    pub fn read<F: Read + Seek>(file: &mut F) -> Result<Header, Box<dyn error::Error + 'static>> {
         let mut header: Header = Default::default();
         let mut reader = BufReader::new(file);
 
@@ -159,10 +159,12 @@ impl Header {
         reader.read_until('\n' as u8, &mut checksum)?;
         header.checksum = checksum.trim_start_matches(b' ' as u8);
 
+        header.end = reader.seek(SeekFrom::Current(0))?;
+
         Ok(header)
     }
 
-    pub fn read_verify<F: Read + Seek> (
+    pub fn read_verify<F: Read + Seek>(
         file: &mut F,
     ) -> Result<Header, Box<dyn error::Error + 'static>> {
         let mut reader = BufReader::new(file);

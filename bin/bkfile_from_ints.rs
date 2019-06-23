@@ -75,9 +75,9 @@ impl InFileAllocator {
         Ok(start)
     }
 
-    fn fnode(&self, index: u64) -> FNode<'_, ExtensibleMmapMut> {
+    fn fnode(&self, index: u64) -> FNode<ExtensibleMmapMut> {
         FNode {
-            config: &self.config,
+            config: self.config,
             index: index as usize,
             child_index: Rc::clone(&self.child_index),
             num_children: Rc::clone(&self.num_children),

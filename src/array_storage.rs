@@ -4,11 +4,11 @@
  *
  * All multi byte entities are stored little endian.
 */
-use std::ops::{Deref, DerefMut};
 use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
 use std::fmt::Debug;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 use byteorder::{ByteOrder, LittleEndian};
@@ -18,12 +18,13 @@ use crate::Dist;
 
 pub trait InStorageNode {
     fn encoding_size(&self) -> usize;
-    fn dist(&self) -> Option<Dist>;
+    fn distance(&self) -> Option<Dist>;
     fn child_count(&self) -> Option<usize>;
     fn children_offset(&self) -> Option<usize>;
     fn key_offset(&self) -> Option<usize>;
     fn key_length(&self) -> Option<usize>;
-    // fn key_bytes(&self) -> Option<&'a [u8]>;
+    //fn key_bytes(&self) -> Option<&[u8]>;
+    fn with_key_bytes<R, F: Fn(&[u8]) -> R>(&self, cb: F) -> Option<R>;
 }
 
 type NodeMutationResult = Result<(), Box<dyn Error>>;
@@ -55,8 +56,9 @@ pub struct FixedKeysConfig {
     pub key: usize,
 }
 
-pub struct FNode<'a, T: ?Sized> {
-    pub config: &'a FixedKeysConfig,
+#[derive(Clone)]
+pub struct FNode<T: ?Sized> {
+    pub config: FixedKeysConfig,
     pub index: usize,
 
     pub child_index: Rc<RefCell<T>>,
@@ -65,7 +67,7 @@ pub struct FNode<'a, T: ?Sized> {
     pub key: Rc<RefCell<T>>,
 }
 
-impl<'a, T: ?Sized> Debug for FNode<'a, T> {
+impl<T: ?Sized> Debug for FNode<T> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Node<@{}>", self.index)
     }
@@ -87,12 +89,12 @@ fn read_le_u64(src: &[u8], index: usize, data_size: usize) -> Option<u64> {
     Some(value)
 }
 
-impl<'a, T: Deref<Target=[u8]>> InStorageNode for FNode<'a, T> {
+impl<> InStorageNode for FNode<&[u8]> {
     fn encoding_size(&self) -> usize {
         self.config.child_index + self.config.num_children + self.config.dist
     }
 
-    fn dist(&self) -> Option<Dist> {
+    fn distance(&self) -> Option<Dist> {
         read_le_u64(&self.dist.borrow(), self.index, self.config.dist).and_then(|d| Some(d as Dist))
     }
 
@@ -124,9 +126,17 @@ impl<'a, T: Deref<Target=[u8]>> InStorageNode for FNode<'a, T> {
     fn key_length(&self) -> Option<usize> {
         Some(self.config.key)
     }
+
+    fn with_key_bytes<R, F: Fn(&[u8]) -> R>(&self, cb: F) -> Option<R> {
+        let offset = self.index / self.config.key;
+        let end = offset + self.config.key;
+        let keys = &self.key.borrow();
+        let key_bytes = keys.get(offset..end)?;
+        Some(cb(key_bytes))
+    }
 }
 
-impl<'a, T: DerefMut<Target=[u8]>> FNode<'a, T> {
+impl<T: DerefMut<Target = [u8]>> FNode<T> {
     pub fn set_key<Key: Into<u64>>(&mut self, key: Key) -> NodeMutationResult {
         write_le_u64(
             &mut self.key.borrow_mut(),
@@ -306,12 +316,12 @@ impl<'a> F64BNode8<'a> {
     }
 }
 
-impl<'a> InStorageNode for F64BNode8<'a> {
+impl<'a> F64BNode8<'a> {
     fn encoding_size(&self) -> usize {
         8
     }
 
-    fn dist(&self) -> Option<Dist> {
+    fn distance(&self) -> Option<Dist> {
         //Some(LittleEndian::read_u8(self.get(0, 1)?) as Dist)
         Some(get_slice(&self.node_buffer.borrow(), self.offset, 0, 1)?[0] as Dist)
     }
@@ -338,8 +348,8 @@ impl<'a> InStorageNode for F64BNode8<'a> {
     }
 }
 
-impl<'a> InStorageNodeMut for F64BNode8<'a> {
-    type Key = u64;
+impl<'a> F64BNode8<'a> {
+    // type Key = u64;
 
     fn set_key(&mut self, key: u64) -> NodeMutationResult {
         LittleEndian::write_u64(
